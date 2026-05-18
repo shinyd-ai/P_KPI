@@ -18,17 +18,23 @@ export async function POST(request: NextRequest) {
   const nextPath = safeNextPath(formData.get("next"));
 
   if (!credentials) {
-    return NextResponse.redirect(new URL("/login?error=config", request.url));
+    return NextResponse.redirect(new URL("/login?error=config", request.url), {
+      status: 303,
+    });
   }
 
   const username = String(formData.get("username") ?? "");
   const password = String(formData.get("password") ?? "");
 
   if (username !== credentials.username || password !== credentials.password) {
-    return NextResponse.redirect(new URL("/login?error=invalid", request.url));
+    return NextResponse.redirect(new URL("/login?error=invalid", request.url), {
+      status: 303,
+    });
   }
 
-  const response = NextResponse.redirect(new URL(nextPath, request.url));
+  const response = NextResponse.redirect(new URL(nextPath, request.url), {
+    status: 303,
+  });
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: await createSessionCookieValue(username),
