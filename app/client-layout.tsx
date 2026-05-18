@@ -1,17 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileHeader from "@/components/layout/MobileHeader";
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const pathname = usePathname();
-
-  if (pathname === "/login") {
-    return <>{children}</>;
-  }
 
   return (
     <div className="flex h-full">

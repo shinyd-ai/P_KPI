@@ -25,7 +25,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const nextPath = next?.startsWith("/") && !next.startsWith("//") ? next : "/";
 
   return (
-    <main className="min-h-screen bg-[#f4f7fb] text-zinc-950">
+    <main className="fixed inset-0 z-[100] overflow-y-auto bg-[#f4f7fb] text-zinc-950">
       <div className="grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
         <section className="hidden bg-[#10233f] px-12 py-12 text-white lg:flex lg:flex-col lg:justify-between">
           <div>
