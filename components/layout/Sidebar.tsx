@@ -55,12 +55,6 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         })}
       </nav>
       <div className="px-6 py-4 border-t border-zinc-700">
-        <Link
-          href="/logout"
-          className="mb-3 block text-sm font-medium text-zinc-300 hover:text-white"
-        >
-          Sign out
-        </Link>
         <p className="text-xs text-zinc-500">
           {new Date().getFullYear()}년 목표 관리
         </p>
