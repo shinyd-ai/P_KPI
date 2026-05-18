@@ -39,7 +39,18 @@ ANTHROPIC_API_KEY=...
 
 `ANTHROPIC_API_KEY` is only needed if the monthly review AI feature should work.
 
-## 4. Deploy
+## 4. Optional: copy local SQLite data to Turso
+
+If the local `prisma/dev.db` already has data, copy it to Turso after setting
+`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` locally:
+
+```bash
+OVERWRITE_TURSO=1 npm run db:sync:turso
+```
+
+This overwrites the Turso tables with the current local SQLite data.
+
+## 5. Deploy
 
 Connect the repository to Vercel, or deploy with the Vercel CLI:
 
