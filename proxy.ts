@@ -1,47 +1,40 @@
 import { NextResponse, type NextRequest } from "next/server";
-
-const REALM = "P-KPI2";
-
-function unauthorized() {
-  return new Response("Authentication required", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": `Basic realm="${REALM}", charset="UTF-8"`,
-    },
-  });
-}
-
-function expectedAuthorizationHeader() {
-  const username = process.env.BASIC_AUTH_USERNAME;
-  const password = process.env.BASIC_AUTH_PASSWORD;
-
-  if (!username || !password) {
-    return null;
-  }
-
-  return `Basic ${btoa(`${username}:${password}`)}`;
-}
+import {
+  getAppCredentials,
+  getSessionSecret,
+  SESSION_COOKIE_NAME,
+  verifySessionCookieValue,
+} from "@/lib/session";
 
 export function proxy(request: NextRequest) {
-  const expected = expectedAuthorizationHeader();
-
-  if (!expected) {
+  if (!getAppCredentials() || !getSessionSecret()) {
     if (process.env.NODE_ENV === "production") {
-      return new Response("Basic auth is not configured", { status: 503 });
+      return new Response("Login is not configured", { status: 503 });
     }
 
     return NextResponse.next();
   }
 
-  if (request.headers.get("authorization") !== expected) {
-    return unauthorized();
+  const isLoggedIn = verifySessionCookieValue(
+    request.cookies.get(SESSION_COOKIE_NAME)?.value,
+  );
+
+  if (isLoggedIn) {
+    return NextResponse.next();
   }
 
-  return NextResponse.next();
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const loginUrl = new URL("/login", request.url);
+  loginUrl.searchParams.set("next", request.nextUrl.pathname);
+
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|login|logout).*)",
   ],
 };
