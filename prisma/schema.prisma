@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  icon      String   @default("📌")
+  color     String   @default("#6B7280")
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  goals Goal[]
+}
+
+model Goal {
+  id          String   @id @default(cuid())
+  year        Int
+  title       String
+  description String?
+  status      String   @default("ACTIVE") // ACTIVE | COMPLETED | DROPPED
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  monthlyPlans MonthlyPlan[]
+  dailyLogs    DailyLog[]
+  dailyPlans   DailyPlan[]
+}
+
+model MonthlyPlan {
+  id          String   @id @default(cuid())
+  year        Int
+  month       Int
+  title       String
+  description String?
+  goalId      String?
+  goal        Goal?    @relation(fields: [goalId], references: [id])
+  status      String   @default("ACTIVE") // ACTIVE | COMPLETED | PARTIAL | MISSED | DROPPED
+  resultMemo  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  dailyLogs  DailyLog[]
+  dailyPlans DailyPlan[]
+}
+
+model DailyLog {
+  id              String   @id @default(cuid())
+  date            DateTime
+  title           String
+  description     String?
+  durationMinutes Int?
+  alignmentType   String   // MONTHLY_LINKED | GOAL_ALIGNED | UNRELATED
+  monthlyPlanId   String?
+  monthlyPlan     MonthlyPlan? @relation(fields: [monthlyPlanId], references: [id])
+  goalId          String?
+  goal            Goal?        @relation(fields: [goalId], references: [id])
+  createdAt       DateTime @default(now())
+}
+
+model DailyPlan {
+  id               String   @id @default(cuid())
+  date             DateTime
+  title            String
+  monthlyPlanId    String?
+  monthlyPlan      MonthlyPlan? @relation(fields: [monthlyPlanId], references: [id])
+  goalId           String?
+  goal             Goal?        @relation(fields: [goalId], references: [id])
+  completed        Boolean  @default(false)
+  completedAt      DateTime?
+  note             String?      // 저녁 체크 시 메모
+  rolledOver       Boolean  @default(false) // 내일로 넘긴 항목
+  estimatedMinutes Int?         // 아침: 예상 소요 시간 (분)
+  actualMinutes    Int?         // 저녁: 실제 소요 시간 (분)
+  createdAt        DateTime @default(now())
+}
+
+model MonthlyReview {
+  id        String   @id @default(cuid())
+  year      Int
+  month     Int
+  content   String
+  stats     String   // JSON string
+  createdAt DateTime @default(now())
+
+  @@unique([year, month])
+}
+
+
