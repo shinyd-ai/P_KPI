@@ -6,7 +6,7 @@ import {
   verifySessionCookieValue,
 } from "@/lib/session";
 
-export async function proxy(request: NextRequest) {
+export function proxy(request: NextRequest) {
   if (request.nextUrl.pathname === "/api/login") {
     return NextResponse.next();
   }
@@ -19,7 +19,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const isLoggedIn = await verifySessionCookieValue(
+  const isLoggedIn = verifySessionCookieValue(
     request.cookies.get(SESSION_COOKIE_NAME)?.value,
   );
 

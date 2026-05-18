@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   });
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
-    value: await createSessionCookieValue(),
+    value: createSessionCookieValue(),
     httpOnly: true,
     sameSite: "lax",
     secure: request.nextUrl.protocol === "https:",
