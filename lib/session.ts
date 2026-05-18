@@ -1,5 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-
 export const SESSION_COOKIE_NAME = "p_kpi_session";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
@@ -28,26 +26,58 @@ export function getSessionSecret() {
   );
 }
 
-function base64UrlEncode(value: string) {
-  return Buffer.from(value).toString("base64url");
-}
+function bytesToBase64Url(bytes: Uint8Array) {
+  let binary = "";
 
-function sign(value: string, secret: string) {
-  return createHmac("sha256", secret).update(value).digest("base64url");
-}
-
-function signaturesMatch(actual: string, expected: string) {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-
-  if (actualBuffer.length !== expectedBuffer.length) {
-    return false;
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
   }
 
-  return timingSafeEqual(actualBuffer, expectedBuffer);
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
 }
 
-export function createSessionCookieValue(username: string) {
+function base64UrlToBytes(value: string) {
+  const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
+function encodeJson(value: unknown) {
+  return bytesToBase64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function decodeJson<T>(value: string) {
+  return JSON.parse(new TextDecoder().decode(base64UrlToBytes(value))) as T;
+}
+
+async function sign(value: string, secret: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(value),
+  );
+
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
+export async function createSessionCookieValue(username: string) {
   const secret = getSessionSecret();
 
   if (!secret) {
@@ -58,12 +88,12 @@ export function createSessionCookieValue(username: string) {
     username,
     exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
   };
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const encodedPayload = encodeJson(payload);
 
-  return `${encodedPayload}.${sign(encodedPayload, secret)}`;
+  return `${encodedPayload}.${await sign(encodedPayload, secret)}`;
 }
 
-export function verifySessionCookieValue(value?: string) {
+export async function verifySessionCookieValue(value?: string) {
   const secret = getSessionSecret();
 
   if (!secret || !value) {
@@ -76,16 +106,14 @@ export function verifySessionCookieValue(value?: string) {
     return false;
   }
 
-  const expectedSignature = sign(encodedPayload, secret);
+  const expectedSignature = await sign(encodedPayload, secret);
 
-  if (!signaturesMatch(signature, expectedSignature)) {
+  if (signature !== expectedSignature) {
     return false;
   }
 
   try {
-    const payload = JSON.parse(
-      Buffer.from(encodedPayload, "base64url").toString("utf8"),
-    ) as SessionPayload;
+    const payload = decodeJson<SessionPayload>(encodedPayload);
 
     return payload.exp > Math.floor(Date.now() / 1000);
   } catch {

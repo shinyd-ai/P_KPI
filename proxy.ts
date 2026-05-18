@@ -6,7 +6,11 @@ import {
   verifySessionCookieValue,
 } from "@/lib/session";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
+  if (request.nextUrl.pathname === "/api/login") {
+    return NextResponse.next();
+  }
+
   if (!getAppCredentials() || !getSessionSecret()) {
     if (process.env.NODE_ENV === "production") {
       return new Response("Login is not configured", { status: 503 });
@@ -15,7 +19,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const isLoggedIn = verifySessionCookieValue(
+  const isLoggedIn = await verifySessionCookieValue(
     request.cookies.get(SESSION_COOKIE_NAME)?.value,
   );
 
