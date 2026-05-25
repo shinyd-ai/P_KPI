@@ -1,43 +1,45 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { AUTH_COOKIE_NAME, isAuthConfigured, verifyAuthToken } from "@/lib/auth";
 
-const REALM = "P-KPI2";
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/login",
+  "/icon.png",
+  "/apple-icon.png",
+  "/manifest.webmanifest",
+];
 
-function unauthorized() {
-  return new Response("Authentication required", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": `Basic realm="${REALM}", charset="UTF-8"`,
-    },
-  });
+function isPublicPath(pathname: string) {
+  return (
+    PUBLIC_PATHS.includes(pathname) ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/_next/")
+  );
 }
 
-function expectedAuthorizationHeader() {
-  const username = process.env.BASIC_AUTH_USERNAME;
-  const password = process.env.BASIC_AUTH_PASSWORD;
+export async function proxy(request: NextRequest) {
+  const { pathname, search } = request.nextUrl;
 
-  if (!username || !password) {
-    return null;
-  }
-
-  return `Basic ${btoa(`${username}:${password}`)}`;
-}
-
-export function proxy(request: NextRequest) {
-  const expected = expectedAuthorizationHeader();
-
-  if (!expected) {
-    if (process.env.NODE_ENV === "production") {
-      return new Response("Basic auth is not configured", { status: 503 });
-    }
-
+  if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
 
-  if (request.headers.get("authorization") !== expected) {
-    return unauthorized();
+  if (!isAuthConfigured() && process.env.NODE_ENV === "production") {
+    return new Response("App auth is not configured", { status: 503 });
   }
 
-  return NextResponse.next();
+  const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  const isAuthenticated = await verifyAuthToken(token);
+
+  if (isAuthenticated) {
+    return NextResponse.next();
+  }
+
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  loginUrl.searchParams.set("next", `${pathname}${search}`);
+
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
