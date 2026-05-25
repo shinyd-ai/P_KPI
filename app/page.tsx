@@ -35,6 +35,12 @@ function toLocalDateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+const cardStyle = {
+  background: "var(--card-bg)",
+  border: "1px solid var(--card-border)",
+  boxShadow: "var(--card-shadow)",
+};
+
 export default function DashboardPage() {
   const now = new Date();
   const year = now.getFullYear();
@@ -79,84 +85,118 @@ export default function DashboardPage() {
   const todayPlanRate = todayPlanTotal > 0 ? Math.round((todayPlanDone / todayPlanTotal) * 100) : 0;
 
   const alignmentConfig = {
-    MONTHLY_LINKED: { icon: "📌", label: "월간연결", color: "bg-blue-100 text-blue-700" },
-    GOAL_ALIGNED: { icon: "🎯", label: "목표연관", color: "bg-amber-100 text-amber-700" },
-    UNRELATED: { icon: "⬜", label: "기타", color: "bg-zinc-100 text-zinc-500" },
+    MONTHLY_LINKED: { label: "월간연결", color: "bg-indigo-100 text-indigo-700" },
+    GOAL_ALIGNED: { label: "목표연관", color: "bg-amber-100 text-amber-700" },
+    UNRELATED: { label: "기타", color: "bg-slate-100 text-slate-500" },
   };
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 bg-white">
+      <div
+        className="flex items-center justify-between px-5 py-4 md:px-6"
+        style={{
+          background: "rgba(255,255,255,0.8)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          borderBottom: "1px solid rgba(0,0,0,0.07)",
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+        }}
+      >
         <div>
-          <h2 className="text-xl font-semibold text-zinc-800">대시보드</h2>
-          <p className="text-sm text-zinc-400 mt-0.5">
+          <h2 className="text-lg font-bold text-slate-800 tracking-tight">대시보드</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
             {now.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" })}
           </p>
         </div>
         <Link
           href="/daily"
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white rounded-xl transition-all duration-150 hover:scale-[1.02] active:scale-[0.98]"
+          style={{
+            background: "linear-gradient(135deg, #4f7cff 0%, #6366f1 100%)",
+            boxShadow: "0 2px 8px rgba(79,124,255,0.35)",
+          }}
         >
-          📋 오늘 계획/기록
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          오늘 계획/기록
         </Link>
       </div>
 
-      <div className="flex-1 p-6 overflow-auto">
+      <div className="flex-1 p-4 md:p-6 overflow-auto">
         {loading ? (
-          <div className="text-center text-zinc-400 py-20">불러오는 중...</div>
+          <div className="flex items-center justify-center gap-3 text-slate-400 py-20">
+            <span className="spinner" />
+            <span className="text-sm">불러오는 중...</span>
+          </div>
         ) : (
-          <div className="max-w-3xl space-y-6">
+          <div className="max-w-3xl space-y-4 fade-in">
             {/* Today's plan progress */}
-            <div className={`rounded-2xl p-5 border ${
-              todayPlanTotal === 0
-                ? "bg-white border-zinc-200"
-                : todayPlanRate === 100
-                ? "bg-green-50 border-green-200"
-                : "bg-amber-50 border-amber-200"
-            }`}>
+            <div
+              className="rounded-2xl p-5 transition-all duration-200"
+              style={{
+                ...(todayPlanTotal === 0
+                  ? cardStyle
+                  : todayPlanRate === 100
+                  ? { background: "linear-gradient(135deg, #dcfce7 0%, #d1fae5 100%)", border: "1px solid #a7f3d0", boxShadow: "0 2px 8px rgba(16,185,129,0.12)" }
+                  : { background: "linear-gradient(135deg, #fefce8 0%, #fef3c7 100%)", border: "1px solid #fde68a", boxShadow: "0 2px 8px rgba(245,158,11,0.12)" }),
+              }}
+            >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-zinc-800">오늘 계획 달성률</h3>
-                <Link href="/daily" className="text-sm text-blue-600 hover:underline">
-                  {todayPlanTotal === 0 ? "🌅 계획 세우기 →" : "상세 보기 →"}
+                <h3 className="font-semibold text-slate-800 text-sm">오늘 계획 달성률</h3>
+                <Link
+                  href="/daily"
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+                >
+                  {todayPlanTotal === 0 ? "계획 세우기 →" : "상세 보기 →"}
                 </Link>
               </div>
               {todayPlanTotal === 0 ? (
-                <p className="text-sm text-zinc-400">오늘 계획을 아직 세우지 않았습니다</p>
+                <p className="text-sm text-slate-400">오늘 계획을 아직 세우지 않았습니다</p>
               ) : (
                 <>
-                  <div className="flex items-center gap-4 mb-2">
-                    <span className={`text-3xl font-bold ${
-                      todayPlanRate === 100 ? "text-green-600" : "text-amber-600"
+                  <div className="flex items-center gap-4 mb-3">
+                    <span className={`text-3xl font-black tracking-tight ${
+                      todayPlanRate === 100 ? "text-emerald-600" : "text-amber-600"
                     }`}>
                       {todayPlanRate}%
                     </span>
                     <div className="flex-1">
-                      <div className="w-full h-3 bg-white rounded-full overflow-hidden">
+                      <div className="w-full h-2.5 bg-white/60 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${
-                            todayPlanRate === 100 ? "bg-green-500" : "bg-amber-400"
-                          }`}
-                          style={{ width: `${todayPlanRate}%` }}
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${todayPlanRate}%`,
+                            background: todayPlanRate === 100
+                              ? "linear-gradient(90deg, #10b981, #059669)"
+                              : "linear-gradient(90deg, #f59e0b, #d97706)",
+                          }}
                         />
                       </div>
-                      <p className="text-xs text-zinc-500 mt-1">
+                      <p className="text-xs text-slate-500 mt-1">
                         {todayPlanDone}/{todayPlanTotal}개 완료
-                        {todayPlanRate === 100 && " 🎉"}
+                        {todayPlanRate === 100 && " — 완벽!"}
                       </p>
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
+                  <div className="flex flex-wrap gap-1.5 mt-2">
                     {todayDailyPlans.map((p) => (
                       <span
                         key={p.id}
-                        className={`text-xs px-2 py-1 rounded-full ${
+                        className={`text-xs px-2.5 py-1 rounded-full font-medium transition-all ${
                           p.completed
-                            ? "bg-green-100 text-green-700 line-through"
-                            : "bg-white border border-zinc-200 text-zinc-600"
+                            ? "bg-emerald-500/15 text-emerald-700 line-through"
+                            : "bg-white/70 border border-white/80 text-slate-600"
                         }`}
                       >
-                        {p.completed ? "✓ " : ""}{p.title}
+                        {p.completed && (
+                          <span className="mr-0.5">✓</span>
+                        )}
+                        {p.title}
                       </span>
                     ))}
                   </div>
@@ -165,37 +205,41 @@ export default function DashboardPage() {
             </div>
 
             {/* Monthly alignment stats */}
-            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+            <div className="rounded-2xl p-5 transition-all duration-200 hover:shadow-md" style={cardStyle}>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-zinc-800">
-                  {month}월 목표 정렬 현황
-                </h3>
-                <span className="text-sm text-zinc-400">총 {totalLogs}회 기록</span>
+                <h3 className="font-semibold text-slate-800 text-sm">{month}월 목표 정렬 현황</h3>
+                <span className="text-xs text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full">총 {totalLogs}회 기록</span>
               </div>
 
               {totalLogs === 0 ? (
-                <p className="text-sm text-zinc-400 text-center py-4">이번 달 기록이 없습니다</p>
+                <p className="text-sm text-slate-400 text-center py-4">이번 달 기록이 없습니다</p>
               ) : (
                 <>
                   {/* Progress bar */}
-                  <div className="flex h-4 rounded-full overflow-hidden mb-3">
+                  <div className="flex h-3 rounded-full overflow-hidden mb-3 bg-slate-100">
                     {monthlyLinked > 0 && (
                       <div
-                        className="bg-blue-500 transition-all"
-                        style={{ width: `${pct(monthlyLinked)}%` }}
+                        className="transition-all duration-700"
+                        style={{
+                          width: `${pct(monthlyLinked)}%`,
+                          background: "linear-gradient(90deg, #6366f1, #818cf8)",
+                        }}
                         title={`월간연결 ${pct(monthlyLinked)}%`}
                       />
                     )}
                     {goalAligned > 0 && (
                       <div
-                        className="bg-amber-400 transition-all"
-                        style={{ width: `${pct(goalAligned)}%` }}
+                        className="transition-all duration-700"
+                        style={{
+                          width: `${pct(goalAligned)}%`,
+                          background: "linear-gradient(90deg, #f59e0b, #fbbf24)",
+                        }}
                         title={`목표연관 ${pct(goalAligned)}%`}
                       />
                     )}
                     {unrelated > 0 && (
                       <div
-                        className="bg-zinc-200 transition-all"
+                        className="bg-slate-200 transition-all duration-700"
                         style={{ width: `${pct(unrelated)}%` }}
                         title={`기타 ${pct(unrelated)}%`}
                       />
@@ -203,25 +247,25 @@ export default function DashboardPage() {
                   </div>
 
                   {/* Legend */}
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs">
                     <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-full bg-blue-500 shrink-0" />
-                      <span className="text-zinc-600">📌 월간연결 {pct(monthlyLinked)}%</span>
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, #6366f1, #818cf8)" }} />
+                      <span className="text-slate-600">월간연결 {pct(monthlyLinked)}%</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-full bg-amber-400 shrink-0" />
-                      <span className="text-zinc-600">🎯 목표연관 {pct(goalAligned)}%</span>
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: "linear-gradient(135deg, #f59e0b, #fbbf24)" }} />
+                      <span className="text-slate-600">목표연관 {pct(goalAligned)}%</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-3 rounded-full bg-zinc-200 shrink-0" />
-                      <span className="text-zinc-600">⬜ 기타 {pct(unrelated)}%</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-200 shrink-0" />
+                      <span className="text-slate-600">기타 {pct(unrelated)}%</span>
                     </div>
                   </div>
 
                   {/* Total time */}
-                  <div className="mt-4 pt-4 border-t border-zinc-100 text-sm text-zinc-500">
-                    이번 달 총 활동 시간:{" "}
-                    <span className="font-semibold text-zinc-800">
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">이번 달 총 활동 시간</span>
+                    <span className="text-sm font-bold text-slate-700">
                       {Math.floor(totalMinutes / 60)}시간 {totalMinutes % 60}분
                     </span>
                   </div>
@@ -230,39 +274,52 @@ export default function DashboardPage() {
             </div>
 
             {/* Monthly plans progress */}
-            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+            <div className="rounded-2xl p-5 transition-all duration-200 hover:shadow-md" style={cardStyle}>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-zinc-800">{month}월 계획</h3>
+                <h3 className="font-semibold text-slate-800 text-sm">{month}월 계획</h3>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-zinc-400">{completedPlans}/{plans.length} 완료</span>
-                  <Link href="/monthly" className="text-sm text-blue-600 hover:underline">전체 보기 →</Link>
+                  <span className="text-xs text-slate-400">{completedPlans}/{plans.length} 완료</span>
+                  <Link href="/monthly" className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
+                    전체 보기 →
+                  </Link>
                 </div>
               </div>
 
               {plans.length === 0 ? (
-                <p className="text-sm text-zinc-400 text-center py-4">이번 달 계획이 없습니다</p>
+                <p className="text-sm text-slate-400 text-center py-4">이번 달 계획이 없습니다</p>
               ) : (
                 <div className="space-y-2">
                   {(showAllPlans ? plans : plans.slice(0, 6)).map((plan) => (
-                    <div key={plan.id} className="flex items-center gap-3 text-sm">
-                      <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${
-                        plan.status === "COMPLETED" ? "bg-blue-600 border-blue-600 text-white" : "border-zinc-300"
-                      }`}>
-                        {plan.status === "COMPLETED" && <span className="text-xs">✓</span>}
+                    <div
+                      key={plan.id}
+                      className="flex items-center gap-3 text-sm py-0.5"
+                    >
+                      <span
+                        className={`w-4 h-4 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
+                          plan.status === "COMPLETED"
+                            ? "border-indigo-500 bg-indigo-500"
+                            : "border-slate-200"
+                        }`}
+                      >
+                        {plan.status === "COMPLETED" && (
+                          <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5">
+                            <polyline points="2 6 5 9 10 3" />
+                          </svg>
+                        )}
                       </span>
-                      <span className={`flex-1 ${plan.status === "COMPLETED" ? "line-through text-zinc-400" : "text-zinc-700"}`}>
+                      <span className={`flex-1 truncate ${plan.status === "COMPLETED" ? "line-through text-slate-400" : "text-slate-700"}`}>
                         {plan.title}
                       </span>
                       {plan.goal && (
-                        <span className="text-xs text-zinc-400 shrink-0">→ {plan.goal.title}</span>
+                        <span className="text-xs text-slate-400 shrink-0 hidden sm:inline">→ {plan.goal.title}</span>
                       )}
-                      <span className="text-xs text-zinc-400 shrink-0">{plan._count?.dailyLogs ?? 0}회</span>
+                      <span className="text-xs text-slate-300 shrink-0">{plan._count?.dailyLogs ?? 0}회</span>
                     </div>
                   ))}
                   {plans.length > 6 && (
                     <button
                       onClick={() => setShowAllPlans((v) => !v)}
-                      className="block w-full text-center text-xs text-zinc-400 hover:text-blue-600 mt-2 py-1"
+                      className="block w-full text-center text-xs text-slate-400 hover:text-indigo-600 mt-2 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
                     >
                       {showAllPlans ? "접기 ↑" : `+${plans.length - 6}개 더 보기 ↓`}
                     </button>
@@ -272,26 +329,28 @@ export default function DashboardPage() {
             </div>
 
             {/* Today's logs */}
-            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+            <div className="rounded-2xl p-5 transition-all duration-200 hover:shadow-md" style={cardStyle}>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-zinc-800">오늘 기록</h3>
-                <Link href="/daily" className="text-sm text-blue-600 hover:underline">+ 추가 →</Link>
+                <h3 className="font-semibold text-slate-800 text-sm">오늘 기록</h3>
+                <Link href="/daily" className="text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
+                  + 추가 →
+                </Link>
               </div>
 
               {todayLogs.length === 0 ? (
-                <p className="text-sm text-zinc-400 text-center py-4">오늘 기록이 없습니다</p>
+                <p className="text-sm text-slate-400 text-center py-4">오늘 기록이 없습니다</p>
               ) : (
                 <div className="space-y-2">
                   {todayLogs.map((log) => {
                     const config = alignmentConfig[log.alignmentType];
                     return (
-                      <div key={log.id} className="flex items-center gap-3 text-sm">
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${config.color}`}>
-                          {config.icon}
+                      <div key={log.id} className="flex items-center gap-3 text-sm py-0.5">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${config.color}`}>
+                          {config.label}
                         </span>
-                        <span className="flex-1 text-zinc-700">{log.title}</span>
+                        <span className="flex-1 truncate text-slate-700">{log.title}</span>
                         {log.durationMinutes && (
-                          <span className="text-xs text-zinc-400 shrink-0">{log.durationMinutes}분</span>
+                          <span className="text-xs text-slate-400 shrink-0">{log.durationMinutes}분</span>
                         )}
                       </div>
                     );
@@ -304,17 +363,37 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 gap-3">
               <Link
                 href={`/review/${year}/${month}`}
-                className="bg-white border border-zinc-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all text-center"
+                className="rounded-2xl p-4 transition-all duration-200 hover:scale-[1.02] hover:shadow-md text-center group"
+                style={cardStyle}
               >
-                <p className="text-2xl mb-1">📋</p>
-                <p className="text-sm font-medium text-zinc-700">{month}월 회고 보기</p>
+                <div className="w-10 h-10 rounded-xl mx-auto mb-2 flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, #e0e7ff 0%, #ddd6fe 100%)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-slate-700 group-hover:text-indigo-600 transition-colors">{month}월 회고 보기</p>
               </Link>
               <Link
                 href="/goals"
-                className="bg-white border border-zinc-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all text-center"
+                className="rounded-2xl p-4 transition-all duration-200 hover:scale-[1.02] hover:shadow-md text-center group"
+                style={cardStyle}
               >
-                <p className="text-2xl mb-1">🎯</p>
-                <p className="text-sm font-medium text-zinc-700">연간 목표 관리</p>
+                <div className="w-10 h-10 rounded-xl mx-auto mb-2 flex items-center justify-center"
+                  style={{ background: "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="4" />
+                    <line x1="12" y1="2" x2="12" y2="4" />
+                    <line x1="12" y1="20" x2="12" y2="22" />
+                    <line x1="2" y1="12" x2="4" y2="12" />
+                    <line x1="20" y1="12" x2="22" y2="12" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-slate-700 group-hover:text-amber-600 transition-colors">연간 목표 관리</p>
               </Link>
             </div>
           </div>
@@ -323,5 +402,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-

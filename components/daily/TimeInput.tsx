@@ -45,17 +45,27 @@ export default function TimeInput({ value, onChange }: TimeInputProps) {
 
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-1.5">
         {CHIPS.map((chip) => (
           <button
             key={chip.minutes}
             type="button"
             onClick={() => handleChip(chip.minutes)}
-            className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+            className="px-2.5 py-1 text-xs rounded-full border font-medium transition-all"
+            style={
               value === chip.minutes
-                ? "bg-blue-500 text-white border-blue-500"
-                : "bg-white text-zinc-600 border-zinc-200 hover:border-blue-300 hover:text-blue-600"
-            }`}
+                ? {
+                    background: "linear-gradient(135deg, #4f7cff 0%, #6366f1 100%)",
+                    color: "#fff",
+                    borderColor: "transparent",
+                    boxShadow: "0 1px 4px rgba(79,124,255,0.3)",
+                  }
+                : {
+                    background: "#fff",
+                    color: "#64748b",
+                    borderColor: "rgba(0,0,0,0.10)",
+                  }
+            }
           >
             {chip.label}
           </button>
@@ -70,15 +80,15 @@ export default function TimeInput({ value, onChange }: TimeInputProps) {
           value={hoursStr}
           onChange={handleInput}
           placeholder="0"
-          className="w-16 border border-zinc-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-slate-50 text-center"
         />
-        <span className="text-xs text-zinc-400">h</span>
+        <span className="text-xs text-slate-400">h</span>
         {value !== null && value > 0 && (
-          <span className="text-xs text-blue-500 font-medium">{formatTime(value)}</span>
+          <span className="text-xs font-semibold" style={{ color: "#6366f1" }}>
+            {formatTime(value)}
+          </span>
         )}
       </div>
     </div>
   );
 }
-
-

@@ -9,7 +9,7 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "100억 목표 정렬 시스템",
+  title: "Stride - 매일 목표를 향해 나아가다",
   description: "개인 목표 관리 - 연간 목표, 월간 계획, 일간 기록",
 };
 
@@ -20,11 +20,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko" className={`${geistSans.variable} h-full`}>
-      <body className="h-full bg-zinc-50">
+      <body className="h-full" style={{ background: "var(--background)" }}>
         <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );
 }
-
-

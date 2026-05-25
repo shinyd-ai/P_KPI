@@ -21,6 +21,10 @@ interface GoalFormProps {
   onCancel: () => void;
 }
 
+const inputClass =
+  "w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-slate-50 focus:bg-white transition-colors placeholder:text-slate-300";
+const labelClass = "block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide";
+
 export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormProps) {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(initialData?.year ?? currentYear);
@@ -83,11 +87,11 @@ export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormP
     <form onSubmit={handleSubmit} className="space-y-4">
       {!isEdit && (
         <div>
-          <label className="block text-sm font-medium text-zinc-700 mb-1">연도</label>
+          <label className={labelClass}>연도</label>
           <select
             value={year}
             onChange={(e) => setYear(parseInt(e.target.value))}
-            className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={inputClass}
           >
             {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
               <option key={y} value={y}>{y}년</option>
@@ -96,11 +100,11 @@ export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormP
         </div>
       )}
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">카테고리</label>
+        <label className={labelClass}>카테고리</label>
         <select
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={inputClass}
         >
           <option value="">카테고리 없음</option>
           {categories.map((c) => (
@@ -109,39 +113,47 @@ export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormP
         </select>
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">목표 제목 *</label>
+        <label className={labelClass}>목표 제목 *</label>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="예: AI 스킬 마스터리"
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={inputClass}
           required
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">설명 (선택)</label>
+        <label className={labelClass}>설명 (선택)</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="목표에 대한 추가 설명..."
           rows={3}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className={`${inputClass} resize-none`}
         />
       </div>
-      {error && <p className="text-red-600 text-sm">{error}</p>}
-      <div className="flex gap-3 pt-2">
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-red-600 text-sm">
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2.5 pt-1">
         <button
           type="submit"
           disabled={loading || !title.trim()}
-          className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex-1 py-2.5 text-sm font-semibold text-white rounded-xl disabled:opacity-50 transition-all hover:scale-[1.01]"
+          style={{
+            background: "linear-gradient(135deg, #4f7cff 0%, #6366f1 100%)",
+            boxShadow: "0 2px 6px rgba(79,124,255,0.3)",
+          }}
         >
           {loading ? "저장 중..." : isEdit ? "수정" : "추가"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-colors"
+          className="flex-1 py-2.5 bg-slate-100 text-slate-600 text-sm font-medium rounded-xl hover:bg-slate-200 transition-colors"
         >
           취소
         </button>
@@ -149,5 +161,3 @@ export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormP
     </form>
   );
 }
-
-

@@ -120,6 +120,49 @@ export async function PATCH(request: NextRequest) {
         goal: { select: { id: true, title: true } },
       },
     });
+
+    // 월간계획 상태 자동화: completed 변경 시 monthlyPlanId가 있으면 완료율 재계산
+    if (completed !== undefined && plan.monthlyPlanId) {
+      const monthlyPlanId = plan.monthlyPlanId;
+
+      // 현재 월간계획 status 확인
+      const monthlyPlan = await prisma.monthlyPlan.findUnique({
+        where: { id: monthlyPlanId },
+        select: { status: true },
+      });
+
+      // DROPPED 상태이면 변경하지 않음
+      if (monthlyPlan && monthlyPlan.status !== "DROPPED") {
+        // 해당 월간계획에 연결된 롤오버되지 않은 일간계획 전체 조회
+        const linkedPlans = await prisma.dailyPlan.findMany({
+          where: { monthlyPlanId, rolledOver: false },
+          select: { completed: true },
+        });
+
+        const total = linkedPlans.length;
+        const completedCount = linkedPlans.filter((p) => p.completed).length;
+
+        let newStatus: string;
+        if (total === 0) {
+          newStatus = "ACTIVE";
+        } else {
+          const rate = (completedCount / total) * 100;
+          if (rate === 100) {
+            newStatus = "COMPLETED";
+          } else if (rate >= 1) {
+            newStatus = "PARTIAL";
+          } else {
+            newStatus = "ACTIVE";
+          }
+        }
+
+        await prisma.monthlyPlan.update({
+          where: { id: monthlyPlanId },
+          data: { status: newStatus },
+        });
+      }
+    }
+
     return NextResponse.json(plan);
   } catch (error) {
     console.error("PATCH /api/daily-plans error:", error);

@@ -3,19 +3,33 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const year = searchParams.get("year");
+  const yearParam = searchParams.get("year");
+  const targetYear = yearParam ? parseInt(yearParam) : new Date().getFullYear();
 
   try {
     const goals = await prisma.goal.findMany({
-      where: year ? { year: parseInt(year) } : undefined,
+      where: yearParam ? { year: parseInt(yearParam) } : undefined,
       include: {
-        monthlyPlans: true,
+        monthlyPlans: {
+          where: { year: targetYear },
+          select: { id: true, status: true },
+        },
         category: { select: { id: true, name: true, icon: true, color: true } },
         _count: { select: { dailyLogs: true } },
       },
       orderBy: { createdAt: "desc" },
     });
-    return NextResponse.json(goals);
+
+    // 각 goal에 progressRate 계산하여 추가
+    const goalsWithProgress = goals.map((goal) => {
+      const plans = goal.monthlyPlans;
+      const total = plans.length;
+      const completedCount = plans.filter((p) => p.status === "COMPLETED").length;
+      const progressRate = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+      return { ...goal, progressRate };
+    });
+
+    return NextResponse.json(goalsWithProgress);
   } catch (error) {
     console.error("GET /api/goals error:", error);
     return NextResponse.json({ error: "Failed to fetch goals" }, { status: 500 });

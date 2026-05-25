@@ -12,7 +12,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 z-40 md:hidden"
+          style={{ background: "rgba(15,23,42,0.5)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }}
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -23,5 +24,3 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     </div>
   );
 }
-
-

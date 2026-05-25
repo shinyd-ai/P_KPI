@@ -22,6 +22,10 @@ interface MonthlyPlanFormProps {
   onCancel: () => void;
 }
 
+const inputClass =
+  "w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-slate-50 focus:bg-white transition-colors placeholder:text-slate-300";
+const labelClass = "block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide";
+
 export default function MonthlyPlanForm({
   initialData,
   year,
@@ -95,45 +99,45 @@ export default function MonthlyPlanForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">계획 제목 *</label>
+        <label className={labelClass}>계획 제목 *</label>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="예: AI 강의 수강 완료"
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={inputClass}
           required
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">설명 (선택)</label>
+        <label className={labelClass}>설명 (선택)</label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="이번 달 계획 세부 내용..."
           rows={2}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className={`${inputClass} resize-none`}
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">연관 연간 목표</label>
+        <label className={labelClass}>연관 연간 목표</label>
         <select
           value={goalId}
           onChange={(e) => setGoalId(e.target.value)}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={inputClass}
         >
           <option value="">연결 없음</option>
           {goals.map((g) => (
-            <option key={g.id} value={g.id}>🎯 {g.title}</option>
+            <option key={g.id} value={g.id}>{g.title}</option>
           ))}
         </select>
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">결과 상태</label>
+        <label className={labelClass}>결과 상태</label>
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value as typeof status)}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={inputClass}
         >
           <option value="ACTIVE">진행 중</option>
           <option value="COMPLETED">완료</option>
@@ -143,28 +147,36 @@ export default function MonthlyPlanForm({
         </select>
       </div>
       <div>
-        <label className="block text-sm font-medium text-zinc-700 mb-1">실적 메모</label>
+        <label className={labelClass}>실적 메모</label>
         <textarea
           value={resultMemo}
           onChange={(e) => setResultMemo(e.target.value)}
           placeholder="이번 달 실제 결과나 다음 달에 반영할 점..."
           rows={3}
-          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className={`${inputClass} resize-none`}
         />
       </div>
-      {error && <p className="text-red-600 text-sm">{error}</p>}
-      <div className="flex gap-3 pt-2">
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-red-600 text-sm">
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2.5 pt-1">
         <button
           type="submit"
           disabled={loading || !title.trim()}
-          className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          className="flex-1 py-2.5 text-sm font-semibold text-white rounded-xl disabled:opacity-50 transition-all hover:scale-[1.01]"
+          style={{
+            background: "linear-gradient(135deg, #4f7cff 0%, #6366f1 100%)",
+            boxShadow: "0 2px 6px rgba(79,124,255,0.3)",
+          }}
         >
           {loading ? "저장 중..." : isEdit ? "수정" : "추가"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-colors"
+          className="flex-1 py-2.5 bg-slate-100 text-slate-600 text-sm font-medium rounded-xl hover:bg-slate-200 transition-colors"
         >
           취소
         </button>
@@ -172,5 +184,3 @@ export default function MonthlyPlanForm({
     </form>
   );
 }
-
-
