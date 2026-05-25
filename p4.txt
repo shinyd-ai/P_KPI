@@ -1,0 +1,5146 @@
+[파트 4/10]
+
+=== FILE: ./app/api/daily-logs/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const year = searchParams.get("year");
+  const month = searchParams.get("month");
+  const dateStr = searchParams.get("date");
+
+  try {
+    let dateFilter = {};
+
+    if (dateStr) {
+      const date = new Date(dateStr);
+      dateFilter = { date };
+    } else if (year && month) {
+      const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+      const endDate = new Date(parseInt(year), parseInt(month), 0);
+      dateFilter = { date: { gte: startDate, lte: endDate } };
+    }
+
+    const logs = await prisma.dailyLog.findMany({
+      where: dateFilter,
+      include: {
+        goal: { select: { id: true, title: true } },
+        monthlyPlan: { select: { id: true, title: true } },
+      },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    });
+    return NextResponse.json(logs);
+  } catch (error) {
+    console.error("GET /api/daily-logs error:", error);
+    return NextResponse.json({ error: "Failed to fetch logs" }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { date, title, description, durationMinutes, alignmentType, monthlyPlanId, goalId } = body;
+
+    if (!date || !title || !alignmentType) {
+      return NextResponse.json(
+        { error: "date, title, alignmentType are required" },
+        { status: 400 }
+      );
+    }
+
+    const log = await prisma.dailyLog.create({
+      data: {
+        date: new Date(date),
+        title,
+        description,
+        durationMinutes: durationMinutes ? parseInt(durationMinutes) : null,
+        alignmentType,
+        monthlyPlanId: monthlyPlanId || null,
+        goalId: goalId || null,
+      },
+      include: {
+        goal: { select: { id: true, title: true } },
+        monthlyPlan: { select: { id: true, title: true } },
+      },
+    });
+    return NextResponse.json(log, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/daily-logs error:", error);
+    return NextResponse.json({ error: "Failed to create log" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  try {
+    await prisma.dailyLog.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/daily-logs error:", error);
+    return NextResponse.json({ error: "Failed to delete log" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/api/daily-plans/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+// GET: 날짜별 일간 계획 조회
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const date = searchParams.get("date");
+
+  if (!date) {
+    return NextResponse.json({ error: "date is required" }, { status: 400 });
+  }
+
+  try {
+    const allPlans = await prisma.dailyPlan.findMany({
+      include: {
+        monthlyPlan: { select: { id: true, title: true } },
+        goal: { select: { id: true, title: true, category: { select: { id: true, name: true, icon: true, color: true } } } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Filter by date string in JS to avoid LibSQL DateTime range query issues
+    const plans = allPlans.filter((p) => {
+      const planDate = new Date(p.date).toISOString().slice(0, 10);
+      return planDate === date;
+    });
+
+    return NextResponse.json(plans);
+  } catch (error) {
+    console.error("GET /api/daily-plans error:", error);
+    return NextResponse.json({ error: "Failed to fetch plans" }, { status: 500 });
+  }
+}
+
+// POST: 일간 계획 생성 (단건 또는 월간계획에서 복수 가져오기)
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+
+    // 월간계획 여러 개를 한 번에 가져오는 경우
+    if (body.fromMonthlyPlanIds && Array.isArray(body.fromMonthlyPlanIds)) {
+      const { date, fromMonthlyPlanIds } = body;
+      const targetDate = new Date(date + "T00:00:00.000Z");
+
+      const monthlyPlans = await prisma.monthlyPlan.findMany({
+        where: { id: { in: fromMonthlyPlanIds } },
+        include: { goal: { select: { id: true } } },
+      });
+
+      const created = await Promise.all(
+        monthlyPlans.map((mp) =>
+          prisma.dailyPlan.create({
+            data: {
+              date: targetDate,
+              title: mp.title,
+              monthlyPlanId: mp.id,
+              goalId: mp.goalId ?? null,
+            },
+            include: {
+              monthlyPlan: { select: { id: true, title: true } },
+              goal: { select: { id: true, title: true, category: { select: { id: true, name: true, icon: true, color: true } } } },
+            },
+          })
+        )
+      );
+      return NextResponse.json(created, { status: 201 });
+    }
+
+    // 단건 추가
+    const { date, title, monthlyPlanId, goalId, estimatedMinutes } = body;
+    if (!date || !title) {
+      return NextResponse.json({ error: "date and title are required" }, { status: 400 });
+    }
+
+    const plan = await prisma.dailyPlan.create({
+      data: {
+        date: new Date(date + "T00:00:00.000Z"),
+        title,
+        monthlyPlanId: monthlyPlanId || null,
+        goalId: goalId || null,
+        estimatedMinutes: estimatedMinutes != null ? parseInt(estimatedMinutes) : null,
+      },
+      include: {
+        monthlyPlan: { select: { id: true, title: true } },
+        goal: { select: { id: true, title: true } },
+      },
+    });
+    return NextResponse.json(plan, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/daily-plans error:", error);
+    return NextResponse.json({ error: "Failed to create plan" }, { status: 500 });
+  }
+}
+
+// PATCH: 완료 체크 / 메모 / 내일 넘기기
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, completed, note, rolledOver, estimatedMinutes, actualMinutes } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    const data: Record<string, unknown> = {};
+    if (completed !== undefined) {
+      data.completed = completed;
+      data.completedAt = completed ? new Date() : null;
+    }
+    if (note !== undefined) data.note = note;
+    if (rolledOver !== undefined) data.rolledOver = rolledOver;
+    if (estimatedMinutes !== undefined) data.estimatedMinutes = estimatedMinutes;
+    if (actualMinutes !== undefined) data.actualMinutes = actualMinutes;
+
+    const plan = await prisma.dailyPlan.update({
+      where: { id },
+      data,
+      include: {
+        monthlyPlan: { select: { id: true, title: true } },
+        goal: { select: { id: true, title: true } },
+      },
+    });
+    return NextResponse.json(plan);
+  } catch (error) {
+    console.error("PATCH /api/daily-plans error:", error);
+    return NextResponse.json({ error: "Failed to update plan" }, { status: 500 });
+  }
+}
+
+// DELETE: 일간 계획 삭제
+export async function DELETE(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  try {
+    await prisma.dailyPlan.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/daily-plans error:", error);
+    return NextResponse.json({ error: "Failed to delete plan" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/api/goals/[id]/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const goal = await prisma.goal.findUnique({
+      where: { id },
+      include: {
+        monthlyPlans: { orderBy: [{ year: "desc" }, { month: "desc" }] },
+        dailyLogs: { orderBy: { date: "desc" }, take: 20 },
+      },
+    });
+    if (!goal) return NextResponse.json({ error: "Goal not found" }, { status: 404 });
+    return NextResponse.json(goal);
+  } catch (error) {
+    console.error("GET /api/goals/[id] error:", error);
+    return NextResponse.json({ error: "Failed to fetch goal" }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const body = await request.json();
+    const { title, description, status, categoryId } = body;
+
+    const goal = await prisma.goal.update({
+      where: { id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(status !== undefined && { status }),
+        ...(categoryId !== undefined && { categoryId: categoryId ?? null }),
+      },
+      include: { category: { select: { id: true, name: true, icon: true, color: true } } },
+    });
+    return NextResponse.json(goal);
+  } catch (error) {
+    console.error("PATCH /api/goals/[id] error:", error);
+    return NextResponse.json({ error: "Failed to update goal" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    await prisma.goal.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/goals/[id] error:", error);
+    return NextResponse.json({ error: "Failed to delete goal" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/api/goals/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const year = searchParams.get("year");
+
+  try {
+    const goals = await prisma.goal.findMany({
+      where: year ? { year: parseInt(year) } : undefined,
+      include: {
+        monthlyPlans: true,
+        category: { select: { id: true, name: true, icon: true, color: true } },
+        _count: { select: { dailyLogs: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json(goals);
+  } catch (error) {
+    console.error("GET /api/goals error:", error);
+    return NextResponse.json({ error: "Failed to fetch goals" }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { year, title, description, categoryId } = body;
+
+    if (!year || !title) {
+      return NextResponse.json({ error: "year and title are required" }, { status: 400 });
+    }
+
+    const goal = await prisma.goal.create({
+      data: { year: parseInt(year), title, description, categoryId: categoryId ?? null },
+      include: { category: { select: { id: true, name: true, icon: true, color: true } } },
+    });
+    return NextResponse.json(goal, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/goals error:", error);
+    return NextResponse.json({ error: "Failed to create goal" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/api/monthly-plans/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const year = searchParams.get("year");
+  const month = searchParams.get("month");
+
+  try {
+    const plans = await prisma.monthlyPlan.findMany({
+      where: {
+        ...(year && { year: parseInt(year) }),
+        ...(month && { month: parseInt(month) }),
+      },
+      include: {
+        goal: { select: { id: true, title: true, category: { select: { id: true, name: true, icon: true, color: true } } } },
+        _count: { select: { dailyLogs: true } },
+      },
+      orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "desc" }],
+    });
+    return NextResponse.json(plans);
+  } catch (error) {
+    console.error("GET /api/monthly-plans error:", error);
+    return NextResponse.json({ error: "Failed to fetch plans" }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { year, month, title, description, goalId } = body;
+
+    if (!year || !month || !title) {
+      return NextResponse.json({ error: "year, month, title are required" }, { status: 400 });
+    }
+
+    const plan = await prisma.monthlyPlan.create({
+      data: {
+        year: parseInt(year),
+        month: parseInt(month),
+        title,
+        description,
+        goalId: goalId || null,
+      },
+      include: { goal: { select: { id: true, title: true } } },
+    });
+    return NextResponse.json(plan, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/monthly-plans error:", error);
+    return NextResponse.json({ error: "Failed to create plan" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, title, description, status, goalId } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    const plan = await prisma.monthlyPlan.update({
+      where: { id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(status !== undefined && { status }),
+        ...(goalId !== undefined && { goalId: goalId || null }),
+      },
+      include: { goal: { select: { id: true, title: true } } },
+    });
+    return NextResponse.json(plan);
+  } catch (error) {
+    console.error("PATCH /api/monthly-plans error:", error);
+    return NextResponse.json({ error: "Failed to update plan" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  try {
+    await prisma.monthlyPlan.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("DELETE /api/monthly-plans error:", error);
+    return NextResponse.json({ error: "Failed to delete plan" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/api/monthly-results/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const yearStr = searchParams.get("year");
+  const monthStr = searchParams.get("month");
+
+  if (!yearStr || !monthStr) {
+    return NextResponse.json({ error: "year and month are required" }, { status: 400 });
+  }
+
+  const year = parseInt(yearStr);
+  const month = parseInt(monthStr);
+  const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
+
+  try {
+    // DailyPlan: JS 필터 (LibSQL DateTime 범위 쿼리 이슈 회피)
+    const allDailyPlans = await prisma.dailyPlan.findMany({
+      include: {
+        goal: {
+          select: {
+            id: true,
+            title: true,
+            category: { select: { id: true, name: true, icon: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const dailyPlans = allDailyPlans.filter((p) => {
+      return new Date(p.date).toISOString().slice(0, 7) === monthPrefix;
+    });
+
+    // MonthlyPlan: where 절로 조회
+    const monthlyPlans = await prisma.monthlyPlan.findMany({
+      where: { year, month },
+      include: {
+        goal: {
+          select: {
+            id: true,
+            title: true,
+            category: { select: { id: true, name: true, color: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // DailyLog: 날짜 범위 조회
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const dailyLogs = await prisma.dailyLog.findMany({
+      where: { date: { gte: startDate, lte: endDate } },
+    });
+
+    // ── DailyPlan 집계 ──────────────────────────────────────────
+    const totalDailyPlans = dailyPlans.length;
+    const completedDailyPlans = dailyPlans.filter((p) => p.completed).length;
+    const completionRate =
+      totalDailyPlans > 0 ? Math.round((completedDailyPlans / totalDailyPlans) * 100) : 0;
+
+    let totalEstimatedMinutes = 0;
+    let totalActualMinutes = 0;
+
+    // 목표별 그룹핑
+    const byGoalMap = new Map<
+      string,
+      {
+        goalId: string | null;
+        goalTitle: string;
+        categoryIcon: string;
+        estimatedMinutes: number;
+        actualMinutes: number;
+        completed: number;
+        total: number;
+      }
+    >();
+
+    for (const plan of dailyPlans) {
+      const goalId = plan.goalId ?? null;
+      const key = goalId ?? "__none__";
+
+      if (!byGoalMap.has(key)) {
+        byGoalMap.set(key, {
+          goalId,
+          goalTitle: plan.goal?.title ?? "미분류",
+          categoryIcon: plan.goal?.category?.icon ?? "📌",
+          estimatedMinutes: 0,
+          actualMinutes: 0,
+          completed: 0,
+          total: 0,
+        });
+      }
+
+      const g = byGoalMap.get(key)!;
+      g.estimatedMinutes += plan.estimatedMinutes ?? 0;
+      g.actualMinutes += plan.actualMinutes ?? 0;
+      g.total += 1;
+      if (plan.completed) g.completed += 1;
+
+      totalEstimatedMinutes += plan.estimatedMinutes ?? 0;
+      totalActualMinutes += plan.actualMinutes ?? 0;
+    }
+
+    const byGoal = Array.from(byGoalMap.values());
+
+    // ── DailyLog 집계 ──────────────────────────────────────────
+    const totalLogs = dailyLogs.length;
+    const totalLogMinutes = dailyLogs.reduce((sum, l) => sum + (l.durationMinutes ?? 0), 0);
+    const monthlyLinkedCount = dailyLogs.filter((l) => l.alignmentType === "MONTHLY_LINKED").length;
+    const goalAlignedCount = dailyLogs.filter((l) => l.alignmentType === "GOAL_ALIGNED").length;
+    const unrelatedCount = dailyLogs.filter((l) => l.alignmentType === "UNRELATED").length;
+    const monthlyLinkedPct =
+      totalLogs > 0 ? Math.round((monthlyLinkedCount / totalLogs) * 100) : 0;
+    const goalAlignedPct = totalLogs > 0 ? Math.round((goalAlignedCount / totalLogs) * 100) : 0;
+    const unrelatedPct = totalLogs > 0 ? Math.round((unrelatedCount / totalLogs) * 100) : 0;
+
+    return NextResponse.json({
+      // DailyPlan 기반
+      totalDailyPlans,
+      completedDailyPlans,
+      completionRate,
+      totalEstimatedMinutes,
+      totalActualMinutes,
+      timeDiff: totalActualMinutes - totalEstimatedMinutes,
+
+      // 목표별 집계
+      byGoal,
+
+      // 월간 계획 현황
+      monthlyPlans: monthlyPlans.map((p) => ({
+        id: p.id,
+        title: p.title,
+        status: p.status,
+        goalTitle: p.goal?.title ?? null,
+        categoryColor: p.goal?.category?.color ?? null,
+      })),
+
+      // DailyLog 기반
+      totalLogs,
+      totalLogMinutes,
+      monthlyLinkedPct,
+      goalAlignedPct,
+      unrelatedPct,
+    });
+  } catch (error) {
+    console.error("GET /api/monthly-results error:", error);
+    return NextResponse.json({ error: "Failed to fetch results" }, { status: 500 });
+  }
+}
+
+[파트 5/10]
+
+=== FILE: ./app/api/reviews/[year]/[month]/route.ts ===
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { generateMonthlyReview } from "@/lib/claude";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ year: string; month: string }> }
+) {
+  const { year, month } = await params;
+  try {
+    const review = await prisma.monthlyReview.findUnique({
+      where: { year_month: { year: parseInt(year), month: parseInt(month) } },
+    });
+    if (!review) return NextResponse.json({ error: "Review not found" }, { status: 404 });
+    return NextResponse.json({ ...review, stats: JSON.parse(review.stats) });
+  } catch (error) {
+    console.error("GET /api/reviews error:", error);
+    return NextResponse.json({ error: "Failed to fetch review" }, { status: 500 });
+  }
+}
+
+export async function POST(
+  _request: NextRequest,
+  { params }: { params: Promise<{ year: string; month: string }> }
+) {
+  const { year: yearStr, month: monthStr } = await params;
+  const year = parseInt(yearStr);
+  const month = parseInt(monthStr);
+
+  try {
+    // Get all daily logs for the month
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+
+    const logs = await prisma.dailyLog.findMany({
+      where: { date: { gte: startDate, lte: endDate } },
+      include: {
+        goal: { select: { title: true } },
+        monthlyPlan: { select: { title: true } },
+      },
+    });
+
+    // Get active goals for this year
+    const goals = await prisma.goal.findMany({
+      where: { year, status: "ACTIVE" },
+      select: { title: true, description: true },
+    });
+
+    // Calculate stats
+    const totalLogs = logs.length;
+    const totalMinutes = logs.reduce((sum, l) => sum + (l.durationMinutes ?? 0), 0);
+    const monthlyLinked = logs.filter((l) => l.alignmentType === "MONTHLY_LINKED").length;
+    const goalAligned = logs.filter((l) => l.alignmentType === "GOAL_ALIGNED").length;
+    const unrelated = logs.filter((l) => l.alignmentType === "UNRELATED").length;
+
+    const goalBreakdown: Record<string, number> = {};
+    const planBreakdown: Record<string, number> = {};
+
+    for (const log of logs) {
+      if (log.goal) {
+        goalBreakdown[log.goal.title] = (goalBreakdown[log.goal.title] ?? 0) + 1;
+      }
+      if (log.monthlyPlan) {
+        planBreakdown[log.monthlyPlan.title] = (planBreakdown[log.monthlyPlan.title] ?? 0) + 1;
+      }
+    }
+
+    const stats = {
+      totalLogs,
+      totalMinutes,
+      monthlyLinked,
+      goalAligned,
+      unrelated,
+      monthlyLinkedPct: totalLogs > 0 ? Math.round((monthlyLinked / totalLogs) * 100) : 0,
+      goalAlignedPct: totalLogs > 0 ? Math.round((goalAligned / totalLogs) * 100) : 0,
+      unrelatedPct: totalLogs > 0 ? Math.round((unrelated / totalLogs) * 100) : 0,
+      goalBreakdown,
+      planBreakdown,
+    };
+
+    // Generate review with Claude API
+    const content = await generateMonthlyReview(year, month, stats, goals);
+
+    // Upsert review (stats stored as JSON string for SQLite)
+    const statsJson = JSON.stringify(stats);
+    const review = await prisma.monthlyReview.upsert({
+      where: { year_month: { year, month } },
+      create: { year, month, content, stats: statsJson },
+      update: { content, stats: statsJson },
+    });
+
+    // Parse stats back to object before returning
+    return NextResponse.json({ ...review, stats }, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/reviews error:", error);
+    return NextResponse.json({ error: "Failed to generate review" }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ year: string; month: string }> }
+) {
+  const { year: yearStr, month: monthStr } = await params;
+  const year = parseInt(yearStr);
+  const month = parseInt(monthStr);
+
+  try {
+    const body = await request.json();
+    const { content } = body;
+
+    const review = await prisma.monthlyReview.update({
+      where: { year_month: { year, month } },
+      data: { content },
+    });
+    return NextResponse.json(review);
+  } catch (error) {
+    console.error("PATCH /api/reviews error:", error);
+    return NextResponse.json({ error: "Failed to update review" }, { status: 500 });
+  }
+}
+
+
+=== FILE: ./app/client-layout.tsx ===
+"use client";
+
+import { useState } from "react";
+import Sidebar from "@/components/layout/Sidebar";
+import MobileHeader from "@/components/layout/MobileHeader";
+
+export default function ClientLayout({ children }: { children: React.ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  return (
+    <div className="flex h-full">
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <main className="flex-1 flex flex-col overflow-auto min-w-0">
+        <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
+        {children}
+      </main>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/daily/page.tsx ===
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import MorningTab from "@/components/daily/MorningTab";
+import EveningTab from "@/components/daily/EveningTab";
+
+function toLocalDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getDefaultTab(): "morning" | "evening" {
+  const hour = new Date().getHours();
+  return hour < 14 ? "morning" : "evening";
+}
+
+export interface DailyPlanCategory {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+}
+
+export interface DailyPlan {
+  id: string;
+  date: string;
+  title: string;
+  completed: boolean;
+  completedAt?: string | null;
+  note?: string | null;
+  rolledOver: boolean;
+  estimatedMinutes?: number | null;
+  actualMinutes?: number | null;
+  monthlyPlan?: { id: string; title: string } | null;
+  goal?: { id: string; title: string; category?: DailyPlanCategory | null } | null;
+}
+
+export default function DailyPage() {
+  const today = toLocalDateString(new Date());
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [tab, setTab] = useState<"morning" | "evening">(getDefaultTab());
+  const [plans, setPlans] = useState<DailyPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchPlans = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/daily-plans?date=${selectedDate}`);
+      const data = await res.json();
+      setPlans(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedDate]);
+
+  useEffect(() => { fetchPlans(); }, [fetchPlans]);
+
+  const displayDate = new Date(selectedDate + "T00:00:00");
+  const isToday = selectedDate === today;
+
+  const completedCount = plans.filter((p) => p.completed).length;
+  const totalCount = plans.length;
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-zinc-200 bg-white md:px-6 md:py-4">
+        {/* 모바일: 두 줄 / 데스크탑: 한 줄 */}
+        <div className="flex flex-col gap-2 mb-3 md:flex-row md:items-center md:justify-between">
+          {/* 날짜 네비게이션 행 */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const d = new Date(selectedDate + "T00:00:00");
+                d.setDate(d.getDate() - 1);
+                setSelectedDate(toLocalDateString(d));
+              }}
+              className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors md:p-1.5"
+            >←</button>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 md:flex-none"
+            />
+            <button
+              onClick={() => {
+                const d = new Date(selectedDate + "T00:00:00");
+                d.setDate(d.getDate() + 1);
+                setSelectedDate(toLocalDateString(d));
+              }}
+              className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors md:p-1.5"
+            >→</button>
+            {/* 요일 텍스트: 모바일에서 숨김, md 이상에서 표시 */}
+            <span className="hidden text-sm text-zinc-500 md:inline">
+              {displayDate.toLocaleDateString("ko-KR", { weekday: "long", month: "long", day: "numeric" })}
+              {isToday && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">오늘</span>}
+            </span>
+          </div>
+          {/* 요일 텍스트: 모바일에서만 별도 행으로 표시 */}
+          <span className="text-sm text-zinc-500 md:hidden">
+            {displayDate.toLocaleDateString("ko-KR", { weekday: "long", month: "long", day: "numeric" })}
+            {isToday && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">오늘</span>}
+          </span>
+
+          {/* Progress badge */}
+          {totalCount > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-medium text-zinc-600">
+                <span className="text-blue-600 font-bold">{completedCount}</span>
+                <span className="text-zinc-400">/{totalCount}</span>
+                <span className="text-zinc-400 ml-1">완료</span>
+              </div>
+              <div className="w-20 h-2 bg-zinc-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all"
+                  style={{ width: `${totalCount > 0 ? (completedCount / totalCount) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1">
+          <button
+            onClick={() => setTab("morning")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === "morning"
+                ? "bg-amber-100 text-amber-700"
+                : "text-zinc-500 hover:bg-zinc-100"
+            }`}
+          >
+            <span>🌅</span> 아침 계획
+          </button>
+          <button
+            onClick={() => setTab("evening")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === "evening"
+                ? "bg-indigo-100 text-indigo-700"
+                : "text-zinc-500 hover:bg-zinc-100"
+            }`}
+          >
+            <span>🌙</span> 저녁 체크
+            {plans.some((p) => !p.completed) && totalCount > 0 && (
+              <span className="w-2 h-2 bg-red-400 rounded-full" />
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-auto">
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-zinc-400">불러오는 중...</div>
+        ) : tab === "morning" ? (
+          <MorningTab
+            date={selectedDate}
+            plans={plans}
+            onRefresh={fetchPlans}
+          />
+        ) : (
+          <EveningTab
+            date={selectedDate}
+            plans={plans}
+            onRefresh={fetchPlans}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/globals.css ===
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+
+=== FILE: ./app/goals/[id]/page.tsx ===
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import Header from "@/components/layout/Header";
+
+interface Goal {
+  id: string;
+  year: number;
+  title: string;
+  description?: string | null;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  monthlyPlans: Array<{
+    id: string;
+    year: number;
+    month: number;
+    title: string;
+    status: string;
+  }>;
+  dailyLogs: Array<{
+    id: string;
+    date: string;
+    title: string;
+    alignmentType: string;
+    durationMinutes?: number | null;
+  }>;
+}
+
+const alignmentLabel: Record<string, string> = {
+  MONTHLY_LINKED: "📌 월간연결",
+  GOAL_ALIGNED: "🎯 목표연관",
+  UNRELATED: "⬜ 기타",
+};
+
+export default function GoalDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchGoal = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/goals/${id}`);
+      if (!res.ok) { router.push("/goals"); return; }
+      setGoal(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [id, router]);
+
+  useEffect(() => { fetchGoal(); }, [fetchGoal]);
+
+  if (loading) return <div className="flex-1 flex items-center justify-center text-zinc-400">불러오는 중...</div>;
+  if (!goal) return null;
+
+  const totalMinutes = goal.dailyLogs.reduce((s, l) => s + (l.durationMinutes ?? 0), 0);
+
+  return (
+    <div className="flex flex-col h-full">
+      <Header title={goal.title} />
+      <div className="flex-1 p-6 overflow-auto max-w-3xl">
+        {/* Goal info */}
+        <div className="bg-white border border-zinc-200 rounded-xl p-5 mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm text-zinc-400">{goal.year}년 목표</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              goal.status === "ACTIVE" ? "bg-green-100 text-green-700" :
+              goal.status === "COMPLETED" ? "bg-blue-100 text-blue-700" :
+              "bg-zinc-100 text-zinc-500"
+            }`}>
+              {goal.status === "ACTIVE" ? "진행 중" : goal.status === "COMPLETED" ? "완료" : "중단"}
+            </span>
+          </div>
+          {goal.description && <p className="text-sm text-zinc-600">{goal.description}</p>}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-4 text-sm text-zinc-500">
+            <span>월간 계획 {goal.monthlyPlans.length}개</span>
+            <span>기록 {goal.dailyLogs.length}회</span>
+            <span>총 {Math.floor(totalMinutes / 60)}시간 {totalMinutes % 60}분</span>
+          </div>
+        </div>
+
+        {/* Monthly plans */}
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">월간 계획</h3>
+          {goal.monthlyPlans.length === 0 ? (
+            <p className="text-sm text-zinc-400">연결된 월간 계획이 없습니다</p>
+          ) : (
+            <div className="space-y-2">
+              {goal.monthlyPlans.map((plan) => (
+                <div key={plan.id} className="bg-white border border-zinc-200 rounded-lg px-4 py-3 text-sm">
+                  <span className="text-zinc-400 mr-2">{plan.year}.{String(plan.month).padStart(2, "0")}</span>
+                  <span className="text-zinc-800">{plan.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Recent daily logs */}
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">최근 기록</h3>
+          {goal.dailyLogs.length === 0 ? (
+            <p className="text-sm text-zinc-400">아직 기록이 없습니다</p>
+          ) : (
+            <div className="space-y-2">
+              {goal.dailyLogs.map((log) => (
+                <div key={log.id} className="bg-white border border-zinc-200 rounded-lg px-4 py-3 flex items-center gap-3 text-sm">
+                  <span className="text-zinc-400 shrink-0">
+                    {new Date(log.date).toLocaleDateString("ko-KR", { month: "short", day: "numeric" })}
+                  </span>
+                  <span className="flex-1 text-zinc-800">{log.title}</span>
+                  <span className="text-xs">{alignmentLabel[log.alignmentType]}</span>
+                  {log.durationMinutes && (
+                    <span className="text-zinc-400 text-xs shrink-0">{log.durationMinutes}분</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6">
+          <Link href="/goals" className="text-sm text-zinc-500 hover:text-zinc-700">← 목표 목록으로</Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/goals/page.tsx ===
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import Header from "@/components/layout/Header";
+import GoalCard from "@/components/goals/GoalCard";
+import GoalForm from "@/components/goals/GoalForm";
+
+interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  order: number;
+  _count?: { goals: number };
+}
+
+interface Goal {
+  id: string;
+  year: number;
+  title: string;
+  description?: string | null;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  categoryId?: string | null;
+  category?: { id: string; name: string; icon: string; color: string } | null;
+  _count?: { dailyLogs: number };
+  monthlyPlans?: { id: string }[];
+}
+
+const PRESET_EMOJIS = ["🏢", "📚", "📈", "🔗", "🤝", "📖", "🤖", "🏬", "💪", "👨‍👩‍👧", "🎯", "💡", "🌱", "✈️", "💰"];
+const PRESET_COLORS = [
+  "#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6",
+  "#06B6D4", "#84CC16", "#F97316", "#EC4899", "#6B7280",
+];
+
+export default function GoalsPage() {
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editGoal, setEditGoal] = useState<Goal | null>(null);
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+
+  // 카테고리 관리 모달 상태
+  const [showCatManager, setShowCatManager] = useState(false);
+  const [editCat, setEditCat] = useState<Category | null>(null);
+  const [catName, setCatName] = useState("");
+  const [catIcon, setCatIcon] = useState("📌");
+  const [catColor, setCatColor] = useState("#6B7280");
+  const [catSaving, setCatSaving] = useState(false);
+
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+
+  function toggleCat(key: string) {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  const fetchGoals = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/goals?year=${filterYear}`);
+      const data = await res.json();
+      setGoals(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [filterYear]);
+
+  const fetchCategories = useCallback(async () => {
+    const res = await fetch("/api/categories");
+    const data = await res.json();
+    setCategories(Array.isArray(data) ? data : []);
+  }, []);
+
+  useEffect(() => { fetchGoals(); }, [fetchGoals]);
+  useEffect(() => { fetchCategories(); }, [fetchCategories]);
+
+  async function handleDelete(id: string) {
+    if (!confirm("이 목표를 삭제할까요? 관련 기록은 유지됩니다.")) return;
+    await fetch(`/api/goals/${id}`, { method: "DELETE" });
+    fetchGoals();
+  }
+
+  async function handleStatusChange(id: string, status: Goal["status"]) {
+    await fetch(`/api/goals/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    fetchGoals();
+  }
+
+  // 카테고리 저장 (추가 or 수정)
+  async function handleSaveCat() {
+    if (!catName.trim()) return;
+    setCatSaving(true);
+    try {
+      if (editCat) {
+        await fetch("/api/categories", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editCat.id, name: catName.trim(), icon: catIcon, color: catColor }),
+        });
+      } else {
+        await fetch("/api/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: catName.trim(), icon: catIcon, color: catColor }),
+        });
+      }
+      await fetchCategories();
+      setEditCat(null);
+      setCatName("");
+      setCatIcon("📌");
+      setCatColor("#6B7280");
+    } finally {
+      setCatSaving(false);
+    }
+  }
+
+  async function handleDeleteCat(id: string) {
+    if (!confirm("카테고리를 삭제하면 해당 카테고리의 목표들이 미분류로 변경됩니다. 계속할까요?")) return;
+    await fetch(`/api/categories?id=${id}`, { method: "DELETE" });
+    await Promise.all([fetchCategories(), fetchGoals()]);
+  }
+
+  function startEditCat(cat: Category) {
+    setEditCat(cat);
+    setCatName(cat.name);
+    setCatIcon(cat.icon);
+    setCatColor(cat.color);
+  }
+
+  function cancelCatEdit() {
+    setEditCat(null);
+    setCatName("");
+    setCatIcon("📌");
+    setCatColor("#6B7280");
+  }
+
+  const currentYear = new Date().getFullYear();
+  const years = [currentYear - 1, currentYear, currentYear + 1];
+
+  // 목표를 카테고리별로 그룹핑
+  const grouped = goals.reduce((acc, goal) => {
+    const key = goal.category?.id ?? "__none__";
+    if (!acc[key]) acc[key] = { category: goal.category ?? null, goals: [] };
+    acc[key].goals.push(goal);
+    return acc;
+  }, {} as Record<string, { category: Goal["category"]; goals: Goal[] }>);
+
+  // 카테고리 순서(order)로 정렬, 미분류는 맨 뒤
+  const sortedCategoryIds = [
+    ...categories.map((c) => c.id).filter((id) => grouped[id]),
+    ...(grouped["__none__"] ? ["__none__"] : []),
+  ];
+
+  return (
+    <div className="flex flex-col h-full">
+      <Header
+        title="연간 목표"
+        action={{ label: "+ 목표 추가", onClick: () => { setEditGoal(null); setShowForm(true); } }}
+      />
+      <div className="flex-1 p-6 overflow-auto">
+        {/* 상단 컨트롤 */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex gap-2">
+            {years.map((y) => (
+              <button
+                key={y}
+                onClick={() => setFilterYear(y)}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  filterYear === y
+                    ? "bg-blue-600 text-white"
+                    : "bg-white border border-zinc-200 text-zinc-600 hover:border-blue-300"
+                }`}
+              >
+                {y}년
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setShowCatManager(true)}
+            className="text-sm text-zinc-500 hover:text-zinc-700 flex items-center gap-1.5 px-3 py-1.5 border border-zinc-200 rounded-lg hover:border-zinc-300 transition-colors"
+          >
+            ⚙️ 카테고리 관리
+          </button>
+        </div>
+
+        {/* 목표 추가/수정 모달 */}
+        {showForm && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 shadow-xl">
+              <h3 className="text-lg font-semibold text-zinc-800 mb-4">
+                {editGoal ? "목표 수정" : "새 목표 추가"}
+              </h3>
+              <GoalForm
+                initialData={editGoal ?? { year: filterYear }}
+                onSuccess={() => { setShowForm(false); setEditGoal(null); fetchGoals(); }}
+                onCancel={() => { setShowForm(false); setEditGoal(null); }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 카테고리 관리 모달 */}
+        {showCatManager && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl w-full max-w-md mx-4 shadow-xl overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
+                <h3 className="text-lg font-semibold text-zinc-800">카테고리 관리</h3>
+                <button onClick={() => { setShowCatManager(false); cancelCatEdit(); }} className="text-zinc-400 hover:text-zinc-600 text-xl">✕</button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* 기존 카테고리 목록 */}
+                <div className="space-y-2">
+                  {categories.map((cat) => (
+                    <div key={cat.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${editCat?.id === cat.id ? "border-blue-300 bg-blue-50" : "border-zinc-100 bg-zinc-50"}`}>
+                      <span className="text-xl w-8 text-center">{cat.icon}</span>
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                      <span className="flex-1 text-sm font-medium text-zinc-700">{cat.name}</span>
+                      <span className="text-xs text-zinc-400">{cat._count?.goals ?? 0}개</span>
+                      <button onClick={() => startEditCat(cat)} className="text-xs text-zinc-400 hover:text-blue-600 px-2 py-1 rounded transition-colors">수정</button>
+                      <button onClick={() => handleDeleteCat(cat.id)} className="text-xs text-zinc-400 hover:text-red-500 px-2 py-1 rounded transition-colors">삭제</button>
+                    </div>
+                  ))}
+                  {categories.length === 0 && (
+                    <p className="text-sm text-zinc-400 text-center py-4">카테고리가 없습니다</p>
+                  )}
+                </div>
+
+                {/* 추가/수정 폼 */}
+                <div className="border-t border-zinc-100 pt-4">
+                  <p className="text-sm font-medium text-zinc-600 mb-3">{editCat ? "카테고리 수정" : "새 카테고리 추가"}</p>
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={catName}
+                      onChange={(e) => setCatName(e.target.value)}
+                      placeholder="카테고리 이름 (예: 부동산)"
+                      className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {/* 이모지 선택 */}
+                    <div>
+                      <p className="text-xs text-zinc-500 mb-1.5">아이콘</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PRESET_EMOJIS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => setCatIcon(emoji)}
+                            className={`w-9 h-9 text-lg rounded-lg border-2 transition-colors ${catIcon === emoji ? "border-blue-500 bg-blue-50" : "border-zinc-100 hover:border-zinc-300"}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* 색상 선택 */}
+                    <div>
+                      <p className="text-xs text-zinc-500 mb-1.5">색상</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PRESET_COLORS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            onClick={() => setCatColor(color)}
+                            className={`w-7 h-7 rounded-full border-2 transition-all ${catColor === color ? "border-zinc-800 scale-110" : "border-transparent hover:scale-105"}`}
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveCat}
+                        disabled={catSaving || !catName.trim()}
+                        className="flex-1 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      >
+                        {catSaving ? "저장 중..." : editCat ? "수정" : "추가"}
+                      </button>
+                      {editCat && (
+                        <button
+                          onClick={cancelCatEdit}
+                          className="px-4 py-2 bg-zinc-100 text-zinc-600 text-sm rounded-lg hover:bg-zinc-200 transition-colors"
+                        >
+                          취소
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 목표 목록 (카테고리별 그룹) */}
+        {loading ? (
+          <div className="text-center text-zinc-400 py-20">불러오는 중...</div>
+        ) : goals.length === 0 ? (
+          <div className="text-center py-20">
+            <p className="text-zinc-400 mb-4">아직 목표가 없습니다</p>
+            <button
+              onClick={() => { setEditGoal(null); setShowForm(true); }}
+              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              첫 목표 추가하기
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-8 max-w-2xl">
+            {sortedCategoryIds.map((key) => {
+              const group = grouped[key];
+              if (!group) return null;
+              const cat = group.category;
+              const done = group.goals.filter((g) => g.status === "COMPLETED").length;
+              const total = group.goals.length;
+              const pct = Math.round((done / total) * 100);
+
+              return (
+                <div key={key}>
+                  {/* 카테고리 섹션 헤더 */}
+                  <button
+                    onClick={() => toggleCat(key)}
+                    className="flex items-center gap-3 w-full mb-3 group"
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="text-lg">{cat?.icon ?? "📌"}</span>
+                      <span className="text-sm font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                        {cat?.name ?? "미분류"}
+                      </span>
+                      <span className="text-xs text-zinc-400">{done}/{total}</span>
+                    </div>
+                    <div className="w-24 h-1.5 bg-zinc-100 rounded-full overflow-hidden shrink-0">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${pct}%`,
+                          backgroundColor: pct === 100 ? "#10B981" : (cat?.color ?? "#6B7280"),
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-zinc-500 w-8 text-right shrink-0">{pct}%</span>
+                    <span
+                      className="text-zinc-400 transition-transform duration-200 shrink-0"
+                      style={{ transform: collapsedCats.has(key) ? "rotate(0deg)" : "rotate(90deg)" }}
+                    >
+                      ›
+                    </span>
+                  </button>
+
+                  {/* 해당 카테고리의 목표 목록 */}
+                  {!collapsedCats.has(key) && (
+                    <div className="space-y-3 pl-5 border-l-2" style={{ borderColor: cat?.color ? cat.color + "40" : "#E4E4E7" }}>
+                      {group.goals.map((goal) => (
+                        <GoalCard
+                          key={goal.id}
+                          goal={goal}
+                          onEdit={(g) => { setEditGoal(g); setShowForm(true); }}
+                          onDelete={handleDelete}
+                          onStatusChange={handleStatusChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+[파트 6/10]
+
+=== FILE: ./app/layout.tsx ===
+import type { Metadata } from "next";
+import { Geist } from "next/font/google";
+import "./globals.css";
+import ClientLayout from "@/app/client-layout";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "100억 목표 정렬 시스템",
+  description: "개인 목표 관리 - 연간 목표, 월간 계획, 일간 기록",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="ko" className={`${geistSans.variable} h-full`}>
+      <body className="h-full bg-zinc-50">
+        <ClientLayout>{children}</ClientLayout>
+      </body>
+    </html>
+  );
+}
+
+
+=== FILE: ./app/monthly/[year]/[month]/page.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { use } from "react";
+import { formatTime } from "@/components/daily/TimeInput";
+
+interface ByGoalItem {
+  goalId: string | null;
+  goalTitle: string;
+  categoryIcon: string;
+  estimatedMinutes: number;
+  actualMinutes: number;
+  completed: number;
+  total: number;
+}
+
+interface MonthlyPlanItem {
+  id: string;
+  title: string;
+  status: string;
+  goalTitle?: string | null;
+  categoryColor?: string | null;
+}
+
+interface MonthlyResults {
+  totalDailyPlans: number;
+  completedDailyPlans: number;
+  completionRate: number;
+  totalEstimatedMinutes: number;
+  totalActualMinutes: number;
+  timeDiff: number;
+  byGoal: ByGoalItem[];
+  monthlyPlans: MonthlyPlanItem[];
+  totalLogs: number;
+  totalLogMinutes: number;
+  monthlyLinkedPct: number;
+  goalAlignedPct: number;
+  unrelatedPct: number;
+}
+
+const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  COMPLETED: { label: "완료", cls: "bg-emerald-100 text-emerald-700" },
+  ACTIVE: { label: "진행중", cls: "bg-blue-100 text-blue-700" },
+  DROPPED: { label: "중단", cls: "bg-zinc-100 text-zinc-500" },
+};
+
+export default function MonthlyResultPage({
+  params,
+}: {
+  params: Promise<{ year: string; month: string }>;
+}) {
+  const { year, month } = use(params);
+  const yearNum = parseInt(year);
+  const monthNum = parseInt(month);
+
+  const [data, setData] = useState<MonthlyResults | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/monthly-results?year=${yearNum}&month=${monthNum}`)
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [yearNum, monthNum]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full text-zinc-400 text-sm">
+        불러오는 중...
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center h-full text-zinc-400 text-sm">
+        데이터를 불러오지 못했습니다.
+      </div>
+    );
+  }
+
+  // 목표별 정렬: actualMinutes 내림차순
+  const sortedByGoal = [...data.byGoal].sort((a, b) => b.actualMinutes - a.actualMinutes);
+  const maxMinutes = Math.max(...sortedByGoal.map((g) => Math.max(g.estimatedMinutes, g.actualMinutes)), 1);
+
+  // 달성률 색상
+  const completionColor =
+    data.completionRate >= 100
+      ? "text-emerald-600"
+      : data.completionRate >= 70
+      ? "text-blue-600"
+      : "text-zinc-600";
+
+  // 시간 절약/초과
+  const timeDiffAbs = Math.abs(data.timeDiff);
+  const timeSaved = data.timeDiff < 0; // actual < estimated → 절약
+  const timeDiffLabel = timeDiffAbs === 0 ? "차이 없음" : timeSaved ? "절약" : "초과";
+  const timeDiffColor =
+    timeDiffAbs === 0 ? "text-zinc-500" : timeSaved ? "text-emerald-600" : "text-red-500";
+
+  // 목표 연결 비율
+  const alignedPct = data.monthlyLinkedPct + data.goalAlignedPct;
+
+  const completedPlans = data.monthlyPlans.filter((p) => p.status === "COMPLETED");
+  const activePlans = data.monthlyPlans.filter((p) => p.status === "ACTIVE");
+  const droppedPlans = data.monthlyPlans.filter((p) => p.status === "DROPPED");
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 bg-white">
+        <Link
+          href="/monthly"
+          className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+        >
+          ← {yearNum}년 {monthNum}월 계획
+        </Link>
+        <Link
+          href={`/review/${yearNum}/${monthNum}`}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          📋 AI 회고 →
+        </Link>
+      </div>
+
+      <div className="flex-1 overflow-auto p-6 space-y-6">
+        <h1 className="text-xl font-bold text-zinc-800">
+          {yearNum}년 {monthNum}월 결과
+        </h1>
+
+        {/* 섹션 1: 요약 카드 */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {/* 계획 달성률 */}
+          <div className="bg-white border border-zinc-200 rounded-xl p-4">
+            <p className="text-xs text-zinc-400 mb-1">계획 달성률</p>
+            <p className={`text-2xl font-bold ${completionColor}`}>
+              {data.completionRate}%
+            </p>
+            <p className="text-xs text-zinc-400 mt-1">
+              {data.completedDailyPlans}/{data.totalDailyPlans} 완료
+            </p>
+          </div>
+
+          {/* 총 활동 시간 */}
+          <div className="bg-white border border-zinc-200 rounded-xl p-4">
+            <p className="text-xs text-zinc-400 mb-1">총 활동 시간</p>
+            <p className="text-2xl font-bold text-blue-600">
+              {data.totalActualMinutes > 0 ? formatTime(data.totalActualMinutes) : "—"}
+            </p>
+            <p className="text-xs text-zinc-400 mt-1">실제 기록</p>
+          </div>
+
+          {/* 목표 연결 */}
+          <div className="bg-white border border-zinc-200 rounded-xl p-4">
+            <p className="text-xs text-zinc-400 mb-1">목표 연결</p>
+            <p className="text-2xl font-bold text-amber-600">
+              {data.totalLogs > 0 ? `${alignedPct}%` : "—"}
+            </p>
+            <p className="text-xs text-zinc-400 mt-1">
+              {data.totalLogs > 0 ? `${data.totalLogs}개 활동 중` : "기록 없음"}
+            </p>
+          </div>
+
+          {/* 시간 절약/초과 */}
+          <div className="bg-white border border-zinc-200 rounded-xl p-4">
+            <p className="text-xs text-zinc-400 mb-1">
+              {timeSaved ? "시간 절약" : timeDiffAbs === 0 ? "시간 차이" : "시간 초과"}
+            </p>
+            <p className={`text-2xl font-bold ${timeDiffColor}`}>
+              {timeDiffAbs > 0
+                ? `${timeSaved ? "-" : "+"}${formatTime(timeDiffAbs)}`
+                : "—"}
+            </p>
+            <p className="text-xs text-zinc-400 mt-1">{timeDiffLabel}</p>
+          </div>
+        </div>
+
+        {/* 섹션 2: 목표별 시간 투자 */}
+        {sortedByGoal.length > 0 && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-5">
+            <h2 className="text-sm font-semibold text-zinc-700 mb-4">목표별 시간 투자</h2>
+            <div className="space-y-4">
+              {sortedByGoal.map((g) => {
+                const estBar = maxMinutes > 0 ? (g.estimatedMinutes / maxMinutes) * 100 : 0;
+                const actBar = maxMinutes > 0 ? (g.actualMinutes / maxMinutes) * 100 : 0;
+                const diff = g.actualMinutes - g.estimatedMinutes;
+                const diffAbs = Math.abs(diff);
+                const isSaved = diff < 0;
+                const noEstimate = g.estimatedMinutes === 0 && g.actualMinutes > 0;
+
+                return (
+                  <div key={g.goalId ?? "__none__"}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-medium text-zinc-700">
+                        {g.categoryIcon} {g.goalTitle}
+                      </span>
+                      <span className="text-xs text-zinc-400">
+                        {g.completed}/{g.total} 완료
+                      </span>
+                    </div>
+
+                    {noEstimate ? (
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-zinc-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-400 rounded-full"
+                            style={{ width: `${actBar}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-zinc-500 shrink-0 w-20 text-right">
+                          {formatTime(g.actualMinutes)} 미계획
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {/* 예상 */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-zinc-400 w-6 shrink-0">예</span>
+                          <div className="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-zinc-300 rounded-full"
+                              style={{ width: `${estBar}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-zinc-400 shrink-0 w-16 text-right">
+                            {formatTime(g.estimatedMinutes)}
+                          </span>
+                        </div>
+                        {/* 실제 */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-zinc-400 w-6 shrink-0">실</span>
+                          <div className="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full"
+                              style={{ width: `${actBar}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-zinc-600 font-medium shrink-0 w-16 text-right">
+                            {formatTime(g.actualMinutes)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 차이 뱃지 */}
+                    {!noEstimate && diffAbs > 0 && (
+                      <div className="mt-1 flex justify-end">
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                            isSaved
+                              ? "bg-emerald-50 text-emerald-600"
+                              : "bg-red-50 text-red-500"
+                          }`}
+                        >
+                          {isSaved ? "-" : "+"}{formatTime(diffAbs)} {isSaved ? "절약" : "초과"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 섹션 3: 월간 계획 현황 */}
+        {data.monthlyPlans.length > 0 && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-5">
+            <h2 className="text-sm font-semibold text-zinc-700 mb-1">월간 계획 현황</h2>
+            <div className="flex gap-4 text-sm text-zinc-500 mb-4">
+              <span>
+                <span className="font-semibold text-emerald-600">{completedPlans.length}</span> 완료
+              </span>
+              <span>
+                <span className="font-semibold text-blue-600">{activePlans.length}</span> 진행중
+              </span>
+              {droppedPlans.length > 0 && (
+                <span>
+                  <span className="font-semibold text-zinc-400">{droppedPlans.length}</span> 중단
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {data.monthlyPlans.map((plan) => {
+                const s = STATUS_LABEL[plan.status] ?? STATUS_LABEL.ACTIVE;
+                return (
+                  <div
+                    key={plan.id}
+                    className="flex items-center gap-3 py-2 border-b border-zinc-50 last:border-0"
+                  >
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${s.cls}`}
+                    >
+                      {s.label}
+                    </span>
+                    <span className="text-sm text-zinc-700 flex-1 min-w-0 truncate">
+                      {plan.title}
+                    </span>
+                    {plan.goalTitle && (
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full shrink-0"
+                        style={{
+                          backgroundColor: plan.categoryColor ? plan.categoryColor + "20" : "#F4F4F5",
+                          color: plan.categoryColor ?? "#6B7280",
+                        }}
+                      >
+                        {plan.goalTitle}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 데이터 없음 */}
+        {data.totalDailyPlans === 0 && data.monthlyPlans.length === 0 && (
+          <div className="text-center py-16 text-zinc-400 text-sm">
+            <p className="mb-2">이 달에 기록된 데이터가 없습니다.</p>
+            <Link href="/monthly" className="text-blue-500 hover:underline">
+              월간 계획으로 이동 →
+            </Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/monthly/page.tsx ===
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import Header from "@/components/layout/Header";
+import MonthlyPlanCard from "@/components/monthly/MonthlyPlanCard";
+import MonthlyPlanForm from "@/components/monthly/MonthlyPlanForm";
+import Link from "next/link";
+
+interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+}
+
+interface MonthlyPlan {
+  id: string;
+  year: number;
+  month: number;
+  title: string;
+  description?: string | null;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  goal?: { id: string; title: string; category?: Category | null } | null;
+  _count?: { dailyLogs: number };
+}
+
+export default function MonthlyPage() {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [plans, setPlans] = useState<MonthlyPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editPlan, setEditPlan] = useState<MonthlyPlan | null>(null);
+
+  const fetchPlans = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/monthly-plans?year=${year}&month=${month}`);
+      setPlans(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [year, month]);
+
+  useEffect(() => { fetchPlans(); }, [fetchPlans]);
+
+  async function handleDelete(id: string) {
+    if (!confirm("이 계획을 삭제할까요?")) return;
+    await fetch(`/api/monthly-plans?id=${id}`, { method: "DELETE" });
+    fetchPlans();
+  }
+
+  async function handleStatusChange(id: string, status: MonthlyPlan["status"]) {
+    await fetch("/api/monthly-plans", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    fetchPlans();
+  }
+
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+
+  function toggleCat(key: string) {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  const currentYear = now.getFullYear();
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const completedCount = plans.filter((p) => p.status === "COMPLETED").length;
+
+  // 카테고리별로 그룹핑 (goal → category 경유)
+  const grouped = plans.reduce((acc, plan) => {
+    const cat = plan.goal?.category ?? null;
+    const key = cat?.id ?? "__none__";
+    if (!acc[key]) acc[key] = { category: cat, plans: [] };
+    acc[key].plans.push(plan);
+    return acc;
+  }, {} as Record<string, { category: Category | null; plans: MonthlyPlan[] }>);
+
+  // 카테고리 이름 가나다순 정렬, 미분류는 맨 뒤
+  const groups = Object.values(grouped).sort((a, b) => {
+    if (!a.category && b.category) return 1;
+    if (a.category && !b.category) return -1;
+    return (a.category?.name ?? "").localeCompare(b.category?.name ?? "");
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      <Header
+        title="월간 계획"
+        action={{ label: "+ 계획 추가", onClick: () => { setEditPlan(null); setShowForm(true); } }}
+      />
+      <div className="flex-1 p-6 overflow-auto">
+        {/* Year/Month selector */}
+        <div className="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
+          <select
+            value={year}
+            onChange={(e) => setYear(parseInt(e.target.value))}
+            className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-auto"
+          >
+            {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
+              <option key={y} value={y}>{y}년</option>
+            ))}
+          </select>
+          <div className="flex gap-1 flex-wrap">
+            {months.map((m) => (
+              <button
+                key={m}
+                onClick={() => setMonth(m)}
+                className={`px-3 py-2 rounded-lg text-sm transition-colors md:py-1 ${
+                  month === m ? "bg-blue-600 text-white" : "bg-white border border-zinc-200 text-zinc-600 hover:border-blue-300"
+                }`}
+              >
+                {m}월
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Stats bar */}
+        {plans.length > 0 && (
+          <div className="bg-white border border-zinc-200 rounded-xl p-4 mb-5 flex flex-col gap-3 text-sm md:flex-row md:items-center md:gap-6">
+            <span className="text-zinc-500">
+              <span className="font-semibold text-zinc-800">{completedCount}/{plans.length}</span> 완료
+            </span>
+            <div className="flex-1 bg-zinc-100 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all"
+                style={{ width: `${plans.length ? (completedCount / plans.length) * 100 : 0}%` }}
+              />
+            </div>
+            <Link
+              href={`/monthly/${year}/${month}`}
+              className="text-sm text-blue-600 hover:underline shrink-0 self-end md:self-auto"
+            >
+              📊 이달의 결과 →
+            </Link>
+            <Link
+              href={`/review/${year}/${month}`}
+              className="text-sm text-zinc-500 hover:underline shrink-0 self-end md:self-auto"
+            >
+              📋 AI 회고 →
+            </Link>
+          </div>
+        )}
+
+        {/* Form modal */}
+        {showForm && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 shadow-xl">
+              <h3 className="text-lg font-semibold text-zinc-800 mb-4">
+                {editPlan ? "계획 수정" : `${year}년 ${month}월 계획 추가`}
+              </h3>
+              <MonthlyPlanForm
+                initialData={editPlan ?? undefined}
+                year={year}
+                month={month}
+                onSuccess={() => { setShowForm(false); setEditPlan(null); fetchPlans(); }}
+                onCancel={() => { setShowForm(false); setEditPlan(null); }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Plans list */}
+        {loading ? (
+          <div className="text-center text-zinc-400 py-20">불러오는 중...</div>
+        ) : plans.length === 0 ? (
+          <div className="text-center py-20">
+            <p className="text-zinc-400 mb-4">{year}년 {month}월 계획이 없습니다</p>
+            <button
+              onClick={() => { setEditPlan(null); setShowForm(true); }}
+              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              계획 추가하기
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6 max-w-2xl">
+            {groups.map((group) => {
+              const cat = group.category;
+              const groupDone = group.plans.filter((p) => p.status === "COMPLETED").length;
+              const groupTotal = group.plans.length;
+              const groupPct = Math.round((groupDone / groupTotal) * 100);
+              return (
+                <div key={cat?.id ?? "__none__"}>
+                  {/* 카테고리 섹션 헤더 */}
+                  <button
+                    onClick={() => toggleCat(cat?.id ?? "__none__")}
+                    className="flex items-center gap-3 w-full mb-2 group"
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="text-lg">{cat?.icon ?? "📌"}</span>
+                      <span className="text-sm font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                        {cat?.name ?? "미분류"}
+                      </span>
+                      <span className="text-xs text-zinc-400 shrink-0">{groupDone}/{groupTotal}</span>
+                    </div>
+                    <div className="w-24 h-1.5 bg-zinc-100 rounded-full overflow-hidden shrink-0">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${groupPct}%`,
+                          backgroundColor: groupPct === 100 ? "#10B981" : (cat?.color ?? "#6B7280"),
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-zinc-500 w-8 text-right shrink-0">{groupPct}%</span>
+                    <span
+                      className="text-zinc-400 transition-transform duration-200 shrink-0"
+                      style={{ transform: collapsedCats.has(cat?.id ?? "__none__") ? "rotate(0deg)" : "rotate(90deg)" }}
+                    >
+                      ›
+                    </span>
+                  </button>
+                  {/* 해당 카테고리의 계획 목록 */}
+                  {!collapsedCats.has(cat?.id ?? "__none__") && (
+                    <div
+                      className="space-y-2 pl-5 border-l-2"
+                      style={{ borderColor: cat?.color ? cat.color + "40" : "#E4E4E7" }}
+                    >
+                      {group.plans.map((plan) => (
+                        <MonthlyPlanCard
+                          key={plan.id}
+                          plan={plan}
+                          onEdit={(p) => { setEditPlan(p); setShowForm(true); }}
+                          onDelete={handleDelete}
+                          onStatusChange={handleStatusChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/page.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+
+interface MonthlyPlan {
+  id: string;
+  title: string;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  goal?: { title: string } | null;
+  _count?: { dailyLogs: number };
+}
+
+interface DailyLog {
+  id: string;
+  title: string;
+  alignmentType: "MONTHLY_LINKED" | "GOAL_ALIGNED" | "UNRELATED";
+  durationMinutes?: number | null;
+  monthlyPlan?: { title: string } | null;
+  goal?: { title: string } | null;
+}
+
+interface DailyPlan {
+  id: string;
+  title: string;
+  completed: boolean;
+  monthlyPlan?: { title: string } | null;
+  goal?: { title: string } | null;
+}
+
+function toLocalDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export default function DashboardPage() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  const today = toLocalDateString(now);
+
+  const [plans, setPlans] = useState<MonthlyPlan[]>([]);
+  const [monthLogs, setMonthLogs] = useState<DailyLog[]>([]);
+  const [todayLogs, setTodayLogs] = useState<DailyLog[]>([]);
+  const [todayDailyPlans, setTodayDailyPlans] = useState<DailyPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAllPlans, setShowAllPlans] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/monthly-plans?year=${year}&month=${month}`).then((r) => r.json()),
+      fetch(`/api/daily-logs?year=${year}&month=${month}`).then((r) => r.json()),
+      fetch(`/api/daily-logs?date=${today}`).then((r) => r.json()),
+      fetch(`/api/daily-plans?date=${today}`).then((r) => r.json()),
+    ])
+      .then(([p, ml, tl, dp]) => {
+        setPlans(Array.isArray(p) ? p : []);
+        setMonthLogs(Array.isArray(ml) ? ml : []);
+        setTodayLogs(Array.isArray(tl) ? tl : []);
+        setTodayDailyPlans(Array.isArray(dp) ? dp : []);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [year, month, today]);
+
+  const totalLogs = monthLogs.length;
+  const monthlyLinked = monthLogs.filter((l) => l.alignmentType === "MONTHLY_LINKED").length;
+  const goalAligned = monthLogs.filter((l) => l.alignmentType === "GOAL_ALIGNED").length;
+  const unrelated = monthLogs.filter((l) => l.alignmentType === "UNRELATED").length;
+  const totalMinutes = monthLogs.reduce((s, l) => s + (l.durationMinutes ?? 0), 0);
+  const completedPlans = plans.filter((p) => p.status === "COMPLETED").length;
+
+  const pct = (n: number) => (totalLogs > 0 ? Math.round((n / totalLogs) * 100) : 0);
+
+  const todayPlanTotal = todayDailyPlans.length;
+  const todayPlanDone = todayDailyPlans.filter((p) => p.completed).length;
+  const todayPlanRate = todayPlanTotal > 0 ? Math.round((todayPlanDone / todayPlanTotal) * 100) : 0;
+
+  const alignmentConfig = {
+    MONTHLY_LINKED: { icon: "📌", label: "월간연결", color: "bg-blue-100 text-blue-700" },
+    GOAL_ALIGNED: { icon: "🎯", label: "목표연관", color: "bg-amber-100 text-amber-700" },
+    UNRELATED: { icon: "⬜", label: "기타", color: "bg-zinc-100 text-zinc-500" },
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 bg-white">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-800">대시보드</h2>
+          <p className="text-sm text-zinc-400 mt-0.5">
+            {now.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" })}
+          </p>
+        </div>
+        <Link
+          href="/daily"
+          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          📋 오늘 계획/기록
+        </Link>
+      </div>
+
+      <div className="flex-1 p-6 overflow-auto">
+        {loading ? (
+          <div className="text-center text-zinc-400 py-20">불러오는 중...</div>
+        ) : (
+          <div className="max-w-3xl space-y-6">
+            {/* Today's plan progress */}
+            <div className={`rounded-2xl p-5 border ${
+              todayPlanTotal === 0
+                ? "bg-white border-zinc-200"
+                : todayPlanRate === 100
+                ? "bg-green-50 border-green-200"
+                : "bg-amber-50 border-amber-200"
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-zinc-800">오늘 계획 달성률</h3>
+                <Link href="/daily" className="text-sm text-blue-600 hover:underline">
+                  {todayPlanTotal === 0 ? "🌅 계획 세우기 →" : "상세 보기 →"}
+                </Link>
+              </div>
+              {todayPlanTotal === 0 ? (
+                <p className="text-sm text-zinc-400">오늘 계획을 아직 세우지 않았습니다</p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-4 mb-2">
+                    <span className={`text-3xl font-bold ${
+                      todayPlanRate === 100 ? "text-green-600" : "text-amber-600"
+                    }`}>
+                      {todayPlanRate}%
+                    </span>
+                    <div className="flex-1">
+                      <div className="w-full h-3 bg-white rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            todayPlanRate === 100 ? "bg-green-500" : "bg-amber-400"
+                          }`}
+                          style={{ width: `${todayPlanRate}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        {todayPlanDone}/{todayPlanTotal}개 완료
+                        {todayPlanRate === 100 && " 🎉"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {todayDailyPlans.map((p) => (
+                      <span
+                        key={p.id}
+                        className={`text-xs px-2 py-1 rounded-full ${
+                          p.completed
+                            ? "bg-green-100 text-green-700 line-through"
+                            : "bg-white border border-zinc-200 text-zinc-600"
+                        }`}
+                      >
+                        {p.completed ? "✓ " : ""}{p.title}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Monthly alignment stats */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-zinc-800">
+                  {month}월 목표 정렬 현황
+                </h3>
+                <span className="text-sm text-zinc-400">총 {totalLogs}회 기록</span>
+              </div>
+
+              {totalLogs === 0 ? (
+                <p className="text-sm text-zinc-400 text-center py-4">이번 달 기록이 없습니다</p>
+              ) : (
+                <>
+                  {/* Progress bar */}
+                  <div className="flex h-4 rounded-full overflow-hidden mb-3">
+                    {monthlyLinked > 0 && (
+                      <div
+                        className="bg-blue-500 transition-all"
+                        style={{ width: `${pct(monthlyLinked)}%` }}
+                        title={`월간연결 ${pct(monthlyLinked)}%`}
+                      />
+                    )}
+                    {goalAligned > 0 && (
+                      <div
+                        className="bg-amber-400 transition-all"
+                        style={{ width: `${pct(goalAligned)}%` }}
+                        title={`목표연관 ${pct(goalAligned)}%`}
+                      />
+                    )}
+                    {unrelated > 0 && (
+                      <div
+                        className="bg-zinc-200 transition-all"
+                        style={{ width: `${pct(unrelated)}%` }}
+                        title={`기타 ${pct(unrelated)}%`}
+                      />
+                    )}
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-blue-500 shrink-0" />
+                      <span className="text-zinc-600">📌 월간연결 {pct(monthlyLinked)}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-amber-400 shrink-0" />
+                      <span className="text-zinc-600">🎯 목표연관 {pct(goalAligned)}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-zinc-200 shrink-0" />
+                      <span className="text-zinc-600">⬜ 기타 {pct(unrelated)}%</span>
+                    </div>
+                  </div>
+
+                  {/* Total time */}
+                  <div className="mt-4 pt-4 border-t border-zinc-100 text-sm text-zinc-500">
+                    이번 달 총 활동 시간:{" "}
+                    <span className="font-semibold text-zinc-800">
+                      {Math.floor(totalMinutes / 60)}시간 {totalMinutes % 60}분
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Monthly plans progress */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-zinc-800">{month}월 계획</h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-zinc-400">{completedPlans}/{plans.length} 완료</span>
+                  <Link href="/monthly" className="text-sm text-blue-600 hover:underline">전체 보기 →</Link>
+                </div>
+              </div>
+
+              {plans.length === 0 ? (
+                <p className="text-sm text-zinc-400 text-center py-4">이번 달 계획이 없습니다</p>
+              ) : (
+                <div className="space-y-2">
+                  {(showAllPlans ? plans : plans.slice(0, 6)).map((plan) => (
+                    <div key={plan.id} className="flex items-center gap-3 text-sm">
+                      <span className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 ${
+                        plan.status === "COMPLETED" ? "bg-blue-600 border-blue-600 text-white" : "border-zinc-300"
+                      }`}>
+                        {plan.status === "COMPLETED" && <span className="text-xs">✓</span>}
+                      </span>
+                      <span className={`flex-1 ${plan.status === "COMPLETED" ? "line-through text-zinc-400" : "text-zinc-700"}`}>
+                        {plan.title}
+                      </span>
+                      {plan.goal && (
+                        <span className="text-xs text-zinc-400 shrink-0">→ {plan.goal.title}</span>
+                      )}
+                      <span className="text-xs text-zinc-400 shrink-0">{plan._count?.dailyLogs ?? 0}회</span>
+                    </div>
+                  ))}
+                  {plans.length > 6 && (
+                    <button
+                      onClick={() => setShowAllPlans((v) => !v)}
+                      className="block w-full text-center text-xs text-zinc-400 hover:text-blue-600 mt-2 py-1"
+                    >
+                      {showAllPlans ? "접기 ↑" : `+${plans.length - 6}개 더 보기 ↓`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Today's logs */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-zinc-800">오늘 기록</h3>
+                <Link href="/daily" className="text-sm text-blue-600 hover:underline">+ 추가 →</Link>
+              </div>
+
+              {todayLogs.length === 0 ? (
+                <p className="text-sm text-zinc-400 text-center py-4">오늘 기록이 없습니다</p>
+              ) : (
+                <div className="space-y-2">
+                  {todayLogs.map((log) => {
+                    const config = alignmentConfig[log.alignmentType];
+                    return (
+                      <div key={log.id} className="flex items-center gap-3 text-sm">
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${config.color}`}>
+                          {config.icon}
+                        </span>
+                        <span className="flex-1 text-zinc-700">{log.title}</span>
+                        {log.durationMinutes && (
+                          <span className="text-xs text-zinc-400 shrink-0">{log.durationMinutes}분</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Quick links */}
+            <div className="grid grid-cols-2 gap-3">
+              <Link
+                href={`/review/${year}/${month}`}
+                className="bg-white border border-zinc-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all text-center"
+              >
+                <p className="text-2xl mb-1">📋</p>
+                <p className="text-sm font-medium text-zinc-700">{month}월 회고 보기</p>
+              </Link>
+              <Link
+                href="/goals"
+                className="bg-white border border-zinc-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all text-center"
+              >
+                <p className="text-2xl mb-1">🎯</p>
+                <p className="text-sm font-medium text-zinc-700">연간 목표 관리</p>
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./app/review/[year]/[month]/page.tsx ===
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useParams } from "next/navigation";
+import Link from "next/link";
+import ReviewStats from "@/components/review/ReviewStats";
+
+interface Review {
+  id: string;
+  year: number;
+  month: number;
+  content: string;
+  stats: {
+    totalLogs: number;
+    totalMinutes: number;
+    monthlyLinked: number;
+    goalAligned: number;
+    unrelated: number;
+    monthlyLinkedPct: number;
+    goalAlignedPct: number;
+    unrelatedPct: number;
+    goalBreakdown: Record<string, number>;
+    planBreakdown: Record<string, number>;
+  };
+  createdAt: string;
+}
+
+export default function ReviewPage() {
+  const { year: yearStr, month: monthStr } = useParams<{ year: string; month: string }>();
+  const year = parseInt(yearStr);
+  const month = parseInt(monthStr);
+
+  const [review, setReview] = useState<Review | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchReview = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/reviews/${year}/${month}`);
+      if (res.ok) {
+        const data = await res.json();
+        setReview(data);
+        setEditContent(data.content);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [year, month]);
+
+  useEffect(() => { fetchReview(); }, [fetchReview]);
+
+  async function generateReview() {
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/reviews/${year}/${month}`, { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error ?? "회고 생성 실패");
+      }
+      const data = await res.json();
+      setReview(data);
+      setEditContent(data.content);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "오류가 발생했습니다");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function saveEdit() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/reviews/${year}/${month}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: editContent }),
+      });
+      if (!res.ok) throw new Error("저장 실패");
+      const data = await res.json();
+      setReview(data);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "저장 오류");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const monthName = `${year}년 ${month}월`;
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex flex-col gap-3 px-4 py-4 border-b border-zinc-200 bg-white md:flex-row md:items-center md:justify-between md:px-6">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-800">{monthName} 회고</h2>
+          <Link href="/monthly" className="text-sm text-zinc-400 hover:text-zinc-600">
+            ← 월간 계획으로
+          </Link>
+        </div>
+        <div className="flex gap-2 self-end md:self-auto">
+          {review && !editing && (
+            <button
+              onClick={() => { setEditing(true); }}
+              className="px-4 py-2 bg-zinc-100 text-zinc-700 text-sm font-medium rounded-lg hover:bg-zinc-200 transition-colors"
+            >
+              수정
+            </button>
+          )}
+          <button
+            onClick={generateReview}
+            disabled={generating}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {generating ? "생성 중..." : review ? "재생성" : "AI 회고 생성"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 p-6 overflow-auto">
+        <div className="max-w-3xl space-y-6">
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="text-center text-zinc-400 py-20">불러오는 중...</div>
+          ) : generating ? (
+            <div className="text-center py-20">
+              <div className="inline-flex items-center gap-3 text-zinc-500">
+                <span className="text-2xl">🤖</span>
+                <div>
+                  <p className="font-medium">Claude가 회고를 작성하고 있습니다...</p>
+                  <p className="text-sm text-zinc-400 mt-1">이번 달 데이터를 분석 중입니다</p>
+                </div>
+              </div>
+            </div>
+          ) : !review ? (
+            <div className="text-center py-20">
+              <p className="text-4xl mb-4">📋</p>
+              <p className="text-zinc-600 font-medium mb-2">{monthName} 회고가 없습니다</p>
+              <p className="text-sm text-zinc-400 mb-6">
+                이번 달 기록이 있다면 AI가 자동으로 회고를 생성해드립니다
+              </p>
+              <button
+                onClick={generateReview}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                🤖 AI 회고 생성하기
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Stats */}
+              <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+                <h3 className="font-semibold text-zinc-800 mb-4">📊 이달의 통계</h3>
+                <ReviewStats stats={review.stats} />
+              </div>
+
+              {/* Review content */}
+              <div className="bg-white border border-zinc-200 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-zinc-800">🤖 AI 회고</h3>
+                  <span className="text-xs text-zinc-400">
+                    {new Date(review.createdAt).toLocaleDateString("ko-KR")} 생성
+                  </span>
+                </div>
+
+                {editing ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={20}
+                      className="w-full border border-zinc-200 rounded-xl px-4 py-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                    />
+                    <div className="flex gap-3">
+                      <button
+                        onClick={saveEdit}
+                        disabled={saving}
+                        className="px-6 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      >
+                        {saving ? "저장 중..." : "저장"}
+                      </button>
+                      <button
+                        onClick={() => { setEditing(false); setEditContent(review.content); }}
+                        className="px-6 py-2 bg-zinc-100 text-zinc-700 text-sm rounded-lg hover:bg-zinc-200 transition-colors"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="prose prose-sm max-w-none text-zinc-700">
+                    {review.content.split("\n").map((line, i) => {
+                      if (line.startsWith("## ")) {
+                        return <h2 key={i} className="text-base font-bold text-zinc-800 mt-5 mb-2">{line.slice(3)}</h2>;
+                      }
+                      if (line.startsWith("### ")) {
+                        return <h3 key={i} className="text-sm font-semibold text-zinc-700 mt-4 mb-1">{line.slice(4)}</h3>;
+                      }
+                      if (line.startsWith("- ")) {
+                        return <p key={i} className="text-sm pl-3 text-zinc-600">• {line.slice(2)}</p>;
+                      }
+                      if (line === "") {
+                        return <div key={i} className="h-2" />;
+                      }
+                      return <p key={i} className="text-sm text-zinc-700">{line}</p>;
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/daily/DailyLogForm.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+
+interface Goal {
+  id: string;
+  title: string;
+  description?: string | null;
+}
+
+interface MonthlyPlan {
+  id: string;
+  title: string;
+  goal?: { id: string; title: string } | null;
+}
+
+type AlignmentType = "MONTHLY_LINKED" | "GOAL_ALIGNED" | "UNRELATED";
+
+interface DailyLogFormProps {
+  date: string; // YYYY-MM-DD
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+export default function DailyLogForm({ date, onSuccess, onCancel }: DailyLogFormProps) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState("");
+  const [alignmentType, setAlignmentType] = useState<AlignmentType | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+
+  const [monthlyPlans, setMonthlyPlans] = useState<MonthlyPlan[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/monthly-plans?year=${year}&month=${month}`).then((r) => r.json()),
+      fetch(`/api/goals?year=${year}`).then((r) => r.json()),
+    ]).then(([plans, gs]) => {
+      setMonthlyPlans(plans.filter((p: { status: string }) => p.status === "ACTIVE"));
+      setGoals(gs.filter((g: { status: string }) => g.status === "ACTIVE"));
+    });
+  }, [year, month]);
+
+  function handleSelectPlan(planId: string) {
+    setSelectedPlanId(planId);
+    setSelectedGoalId(null);
+    setAlignmentType("MONTHLY_LINKED");
+    // Auto-set goalId from plan's goal
+    const plan = monthlyPlans.find((p) => p.id === planId);
+    if (plan?.goal) setSelectedGoalId(plan.goal.id);
+  }
+
+  function handleSelectGoal(goalId: string) {
+    setSelectedGoalId(goalId);
+    setSelectedPlanId(null);
+    setAlignmentType("GOAL_ALIGNED");
+  }
+
+  function handleSelectUnrelated() {
+    setSelectedPlanId(null);
+    setSelectedGoalId(null);
+    setAlignmentType("UNRELATED");
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !alignmentType) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/daily-logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          title: title.trim(),
+          description: description.trim() || null,
+          durationMinutes: durationMinutes ? parseInt(durationMinutes) : null,
+          alignmentType,
+          monthlyPlanId: selectedPlanId || null,
+          goalId: selectedGoalId || null,
+        }),
+      });
+      if (!res.ok) throw new Error("저장 실패");
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "오류가 발생했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isValid = title.trim() && alignmentType;
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">활동 제목 *</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="예: Claude API 강의 수강"
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">설명 (선택)</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="오늘 한 것, 배운 것..."
+          rows={2}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">소요 시간 (분)</label>
+        <input
+          type="number"
+          value={durationMinutes}
+          onChange={(e) => setDurationMinutes(e.target.value)}
+          placeholder="60"
+          min={1}
+          max={1440}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 md:w-32"
+        />
+      </div>
+
+      {/* Alignment selector - core UI */}
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-2">
+          이 활동을 어떤 목표와 연결할까요? *
+        </label>
+        <div className="border border-zinc-200 rounded-xl overflow-hidden">
+          {/* Monthly plans section */}
+          {monthlyPlans.length > 0 && (
+            <div className="border-b border-zinc-100">
+              <div className="px-4 py-2 bg-zinc-50 text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+                📌 이번 달 계획 항목
+              </div>
+              <div className="divide-y divide-zinc-50">
+                {monthlyPlans.map((plan) => (
+                  <label
+                    key={plan.id}
+                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                      selectedPlanId === plan.id ? "bg-blue-50" : "hover:bg-zinc-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="alignment"
+                      checked={selectedPlanId === plan.id}
+                      onChange={() => handleSelectPlan(plan.id)}
+                      className="text-blue-600"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-zinc-800">{plan.title}</p>
+                      {plan.goal && (
+                        <p className="text-xs text-zinc-400">→ 🎯 {plan.goal.title}</p>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Goals section */}
+          {goals.length > 0 && (
+            <div className="border-b border-zinc-100">
+              <div className="px-4 py-2 bg-zinc-50 text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+                🎯 연간 목표 직접 연결
+              </div>
+              <div className="divide-y divide-zinc-50">
+                {goals.map((goal) => (
+                  <label
+                    key={goal.id}
+                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                      selectedGoalId === goal.id && alignmentType === "GOAL_ALIGNED"
+                        ? "bg-amber-50"
+                        : "hover:bg-zinc-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="alignment"
+                      checked={selectedGoalId === goal.id && alignmentType === "GOAL_ALIGNED"}
+                      onChange={() => handleSelectGoal(goal.id)}
+                      className="text-amber-500"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-zinc-800">{goal.title}</p>
+                      <p className="text-xs text-zinc-400">월간 계획 없이 직접 연결</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Unrelated */}
+          <label
+            className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+              alignmentType === "UNRELATED" ? "bg-zinc-100" : "hover:bg-zinc-50"
+            }`}
+          >
+            <input
+              type="radio"
+              name="alignment"
+              checked={alignmentType === "UNRELATED"}
+              onChange={handleSelectUnrelated}
+            />
+            <div>
+              <p className="text-sm text-zinc-600">⬜ 연결 없음 (기타 활동)</p>
+              <p className="text-xs text-zinc-400">목표와 무관한 활동</p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+
+      <div className="flex gap-3 pt-2">
+        <button
+          type="submit"
+          disabled={loading || !isValid}
+          className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading ? "저장 중..." : "저장"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 bg-zinc-100 text-zinc-700 py-2.5 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-colors"
+        >
+          취소
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+[파트 7/10]
+
+=== FILE: ./components/daily/DailyLogItem.tsx ===
+"use client";
+
+interface DailyLog {
+  id: string;
+  date: string;
+  title: string;
+  description?: string | null;
+  durationMinutes?: number | null;
+  alignmentType: "MONTHLY_LINKED" | "GOAL_ALIGNED" | "UNRELATED";
+  goal?: { id: string; title: string } | null;
+  monthlyPlan?: { id: string; title: string } | null;
+}
+
+interface DailyLogItemProps {
+  log: DailyLog;
+  onDelete: (id: string) => void;
+}
+
+const alignmentConfig = {
+  MONTHLY_LINKED: { icon: "📌", label: "월간연결", color: "bg-blue-100 text-blue-700" },
+  GOAL_ALIGNED: { icon: "🎯", label: "목표연관", color: "bg-amber-100 text-amber-700" },
+  UNRELATED: { icon: "⬜", label: "기타", color: "bg-zinc-100 text-zinc-500" },
+};
+
+export default function DailyLogItem({ log, onDelete }: DailyLogItemProps) {
+  const config = alignmentConfig[log.alignmentType];
+
+  return (
+    <div className="bg-white border border-zinc-200 rounded-xl px-4 py-3 flex items-start gap-3 hover:shadow-sm transition-shadow">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${config.color}`}>
+            {config.icon} {config.label}
+          </span>
+          {log.durationMinutes && (
+            <span className="text-xs text-zinc-400">⏱ {log.durationMinutes}분</span>
+          )}
+        </div>
+        <p className="text-sm font-medium text-zinc-800">{log.title}</p>
+        {log.description && (
+          <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{log.description}</p>
+        )}
+        <div className="flex gap-3 mt-1.5 text-xs text-zinc-400">
+          {log.monthlyPlan && <span>📅 {log.monthlyPlan.title}</span>}
+          {log.goal && !log.monthlyPlan && <span>🎯 {log.goal.title}</span>}
+        </div>
+      </div>
+      <button
+        onClick={() => onDelete(log.id)}
+        className="text-xs text-zinc-300 hover:text-red-400 transition-colors shrink-0 mt-0.5"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/daily/EveningTab.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+import type { DailyPlan, DailyPlanCategory } from "@/app/daily/page";
+import TimeInput, { formatTime } from "@/components/daily/TimeInput";
+
+interface EveningTabProps {
+  date: string;
+  plans: DailyPlan[];
+  onRefresh: () => void;
+}
+
+function toLocalDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+const DEFAULT_AVAILABLE_HOURS = 8;
+const LS_KEY = "daily_available_hours";
+
+function loadAvailableHours(): number {
+  if (typeof window === "undefined") return DEFAULT_AVAILABLE_HOURS;
+  const saved = localStorage.getItem(LS_KEY);
+  const parsed = saved !== null ? parseFloat(saved) : NaN;
+  return isNaN(parsed) ? DEFAULT_AVAILABLE_HOURS : parsed;
+}
+
+export default function EveningTab({ date, plans, onRefresh }: EveningTabProps) {
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [rollingOver, setRollingOver] = useState(false);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [actualMinutes, setActualMinutes] = useState<Record<string, number | null>>({});
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  const [availableHours, setAvailableHours] = useState<number>(DEFAULT_AVAILABLE_HOURS);
+
+  // localStorage에서 가용 시간 불러오기
+  useEffect(() => {
+    setAvailableHours(loadAvailableHours());
+  }, []);
+
+  function handleAvailableHoursChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = parseFloat(e.target.value);
+    const h = isNaN(val) || val < 0 ? 0 : val;
+    setAvailableHours(h);
+    localStorage.setItem(LS_KEY, String(h));
+  }
+
+  function toggleCat(key: string) {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  const completedPlans = plans.filter((p) => p.completed);
+  const pendingPlans = plans.filter((p) => !p.completed && !p.rolledOver);
+  const completionRate = plans.length > 0
+    ? Math.round((completedPlans.length / plans.length) * 100)
+    : 0;
+
+  // 시간 요약 계산
+  const completedActualMinutes = completedPlans.reduce(
+    (sum, p) => sum + (p.actualMinutes ?? 0),
+    0
+  );
+  const pendingEstMinutes = pendingPlans.reduce(
+    (sum, p) => sum + (p.estimatedMinutes ?? 0),
+    0
+  );
+  const availableMinutes = Math.round(availableHours * 60);
+  const untrackedMinutes = Math.max(0, availableMinutes - completedActualMinutes - pendingEstMinutes);
+
+  async function handleToggleComplete(plan: DailyPlan) {
+    setSavingId(plan.id);
+    try {
+      const newCompleted = !plan.completed;
+
+      if (newCompleted) {
+        const alignmentType = plan.monthlyPlan
+          ? "MONTHLY_LINKED"
+          : plan.goal
+          ? "GOAL_ALIGNED"
+          : "UNRELATED";
+
+        const planActualMinutes = actualMinutes[plan.id] ?? null;
+
+        await fetch("/api/daily-logs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            date,
+            title: plan.title,
+            description: notes[plan.id] || null,
+            durationMinutes: planActualMinutes,
+            alignmentType,
+            monthlyPlanId: plan.monthlyPlan?.id || null,
+            goalId: plan.goal?.id || null,
+          }),
+        });
+
+        await fetch("/api/daily-plans", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: plan.id,
+            completed: true,
+            note: notes[plan.id] || null,
+            actualMinutes: planActualMinutes,
+          }),
+        });
+      } else {
+        await fetch("/api/daily-plans", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: plan.id,
+            completed: false,
+            actualMinutes: null,
+          }),
+        });
+      }
+
+      onRefresh();
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function handleRollOver() {
+    if (pendingPlans.length === 0) return;
+    if (!confirm(`미완료 ${pendingPlans.length}개 항목을 내일로 넘길까요?`)) return;
+
+    setRollingOver(true);
+    const tomorrow = new Date(date + "T00:00:00");
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = toLocalDateString(tomorrow);
+
+    try {
+      await Promise.all(
+        pendingPlans.map(async (plan) => {
+          await fetch("/api/daily-plans", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              date: tomorrowStr,
+              title: plan.title,
+              monthlyPlanId: plan.monthlyPlan?.id || null,
+              goalId: plan.goal?.id || null,
+            }),
+          });
+          await fetch("/api/daily-plans", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: plan.id, rolledOver: true }),
+          });
+        })
+      );
+      onRefresh();
+    } finally {
+      setRollingOver(false);
+    }
+  }
+
+  if (plans.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center p-6">
+        <p className="text-4xl mb-3">🌅</p>
+        <p className="text-zinc-600 font-medium mb-1">아직 오늘 계획이 없습니다</p>
+        <p className="text-sm text-zinc-400">아침 탭에서 오늘 할 일을 먼저 추가해 주세요</p>
+      </div>
+    );
+  }
+
+  // 카테고리별 그룹핑
+  function groupByCategory(planList: DailyPlan[]) {
+    const grouped = planList.reduce((acc, plan) => {
+      const cat = plan.goal?.category ?? null;
+      const key = cat?.id ?? "__none__";
+      if (!acc[key]) acc[key] = { category: cat, plans: [] };
+      acc[key].plans.push(plan);
+      return acc;
+    }, {} as Record<string, { category: DailyPlanCategory | null; plans: DailyPlan[] }>);
+
+    return Object.values(grouped).sort((a, b) => {
+      if (!a.category && b.category) return 1;
+      if (a.category && !b.category) return -1;
+      return (a.category?.name ?? "").localeCompare(b.category?.name ?? "");
+    });
+  }
+
+  const pendingGroups = groupByCategory(pendingPlans);
+  const completedGroups = groupByCategory(completedPlans);
+
+  // 프로그레스바 너비 계산 (availableMinutes 기준)
+  function barWidth(minutes: number): string {
+    if (availableMinutes === 0) return "0%";
+    return `${Math.min(100, Math.round((minutes / availableMinutes) * 100))}%`;
+  }
+
+  return (
+    <div className="p-4 max-w-2xl space-y-6 md:p-6">
+      {/* 달성률 요약 */}
+      <div className={`rounded-2xl p-5 ${
+        completionRate === 100
+          ? "bg-green-50 border border-green-200"
+          : completionRate >= 70
+          ? "bg-blue-50 border border-blue-200"
+          : "bg-zinc-50 border border-zinc-200"
+      }`}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-zinc-800">오늘 달성률</h3>
+          <span className={`text-2xl font-bold ${
+            completionRate === 100 ? "text-green-600" :
+            completionRate >= 70 ? "text-blue-600" : "text-zinc-600"
+          }`}>
+            {completionRate}%
+          </span>
+        </div>
+        <div className="w-full h-3 bg-white rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${
+              completionRate === 100 ? "bg-green-500" :
+              completionRate >= 70 ? "bg-blue-500" : "bg-zinc-400"
+            }`}
+            style={{ width: `${completionRate}%` }}
+          />
+        </div>
+        <p className="text-sm text-zinc-500 mt-2">
+          {completedPlans.length}/{plans.length}개 완료
+          {completionRate === 100 && " 🎉 오늘 계획 모두 완료!"}
+        </p>
+      </div>
+
+      {/* 미완료 항목 */}
+      {pendingPlans.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide">
+              ⬜ 미완료 ({pendingPlans.length}개)
+            </h3>
+            <button
+              onClick={handleRollOver}
+              disabled={rollingOver}
+              className="text-xs px-3 py-1.5 bg-orange-100 text-orange-600 rounded-full hover:bg-orange-200 transition-colors disabled:opacity-50"
+            >
+              {rollingOver ? "넘기는 중..." : "↩ 미완료 내일로 넘기기"}
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {pendingGroups.map((group) => {
+              const cat = group.category;
+              const key = cat?.id ?? "__none__";
+              const isCollapsed = collapsedCats.has("pending_" + key);
+
+              return (
+                <div key={key}>
+                  <button
+                    onClick={() => toggleCat("pending_" + key)}
+                    className="flex items-center gap-2 w-full mb-2"
+                  >
+                    <span className="text-base">{cat?.icon ?? "📌"}</span>
+                    <span className="text-xs font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                      {cat?.name ?? "미분류"}
+                    </span>
+                    <span className="text-xs text-zinc-400">{group.plans.length}개</span>
+                    <span
+                      className="text-zinc-400 transition-transform duration-200 ml-auto"
+                      style={{ transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+                    >
+                      ›
+                    </span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="space-y-2 pl-4 border-l-2" style={{ borderColor: cat?.color ? cat.color + "40" : "#E4E4E7" }}>
+                      {group.plans.map((plan) => (
+                        <div key={plan.id} className="bg-white border border-zinc-200 rounded-xl px-4 py-3">
+                          <div className="flex items-start gap-3">
+                            <button
+                              onClick={() => handleToggleComplete(plan)}
+                              disabled={savingId === plan.id}
+                              className="mt-0.5 w-5 h-5 rounded border-2 border-zinc-300 flex items-center justify-center shrink-0 hover:border-blue-400 transition-colors"
+                            >
+                              {savingId === plan.id && <span className="text-xs text-zinc-400">...</span>}
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-zinc-800">{plan.title}</p>
+                                {plan.estimatedMinutes != null && (
+                                  <span className="text-xs text-zinc-400 bg-zinc-50 px-1.5 py-0.5 rounded">
+                                    예상 {formatTime(plan.estimatedMinutes)}
+                                  </span>
+                                )}
+                              </div>
+                              {plan.monthlyPlan && (
+                                <p className="text-xs text-zinc-400 mt-0.5">📅 {plan.monthlyPlan.title}</p>
+                              )}
+                              {/* 실제 소요 시간 입력 */}
+                              <div className="mt-2">
+                                <p className="text-xs text-zinc-400 mb-1">실제 소요 시간</p>
+                                <TimeInput
+                                  value={actualMinutes[plan.id] ?? null}
+                                  onChange={(mins) =>
+                                    setActualMinutes((prev) => ({ ...prev, [plan.id]: mins }))
+                                  }
+                                />
+                              </div>
+                              <input
+                                type="text"
+                                value={notes[plan.id] ?? ""}
+                                onChange={(e) =>
+                                  setNotes((prev) => ({ ...prev, [plan.id]: e.target.value }))
+                                }
+                                placeholder="완료 메모 (선택)..."
+                                className="mt-2 w-full text-xs border border-zinc-100 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-zinc-50"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 완료 항목 */}
+      {completedPlans.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">
+            ✅ 완료 ({completedPlans.length}개)
+          </h3>
+          <div className="space-y-4">
+            {completedGroups.map((group) => {
+              const cat = group.category;
+              const key = cat?.id ?? "__none__";
+              const isCollapsed = collapsedCats.has("done_" + key);
+
+              return (
+                <div key={key}>
+                  <button
+                    onClick={() => toggleCat("done_" + key)}
+                    className="flex items-center gap-2 w-full mb-2"
+                  >
+                    <span className="text-base">{cat?.icon ?? "📌"}</span>
+                    <span className="text-xs font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                      {cat?.name ?? "미분류"}
+                    </span>
+                    <span className="text-xs text-zinc-400">{group.plans.length}개</span>
+                    <span
+                      className="text-zinc-400 transition-transform duration-200 ml-auto"
+                      style={{ transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+                    >
+                      ›
+                    </span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="space-y-2 pl-4 border-l-2" style={{ borderColor: cat?.color ? cat.color + "40" : "#E4E4E7" }}>
+                      {group.plans.map((plan) => {
+                        const diff =
+                          plan.estimatedMinutes != null && plan.actualMinutes != null
+                            ? plan.actualMinutes - plan.estimatedMinutes
+                            : null;
+
+                        return (
+                          <div key={plan.id} className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => handleToggleComplete(plan)}
+                                disabled={savingId === plan.id}
+                                className="w-5 h-5 rounded bg-green-500 flex items-center justify-center shrink-0 hover:bg-green-400 transition-colors"
+                              >
+                                <span className="text-white text-xs">✓</span>
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-green-800 line-through">{plan.title}</p>
+                                {/* 예상 vs 실제 비교 */}
+                                {plan.actualMinutes != null && (
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    {plan.estimatedMinutes != null ? (
+                                      <>
+                                        <span className="text-xs text-zinc-400">
+                                          예상 {formatTime(plan.estimatedMinutes)} → 실제{" "}
+                                          <span className="font-medium text-green-700">
+                                            {formatTime(plan.actualMinutes)}
+                                          </span>
+                                        </span>
+                                        {diff !== null && diff !== 0 && (
+                                          <span className={`text-xs font-medium ${diff > 0 ? "text-red-500" : "text-green-600"}`}>
+                                            ({diff > 0 ? "+" : ""}{formatTime(Math.abs(diff))} {diff > 0 ? "초과" : "절약"})
+                                          </span>
+                                        )}
+                                        {diff === 0 && (
+                                          <span className="text-xs text-blue-500">정확!</span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <span className="text-xs text-zinc-400">
+                                        실제 {formatTime(plan.actualMinutes)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {plan.note && (
+                                  <p className="text-xs text-green-600 mt-0.5">{plan.note}</p>
+                                )}
+                                {plan.completedAt && (
+                                  <p className="text-xs text-green-400 mt-0.5">
+                                    {new Date(plan.completedAt).toLocaleTimeString("ko-KR", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })} 완료
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 오늘 시간 요약 */}
+      <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-5">
+        <h3 className="text-sm font-semibold text-zinc-700 mb-4">⏱ 오늘 시간 요약</h3>
+
+        {/* 가용 시간 설정 */}
+        <div className="flex items-center gap-2 mb-4 pb-4 border-b border-zinc-200">
+          <span className="text-xs text-zinc-500">가용 시간</span>
+          <input
+            type="number"
+            min="0"
+            max="24"
+            step="0.5"
+            value={availableHours}
+            onChange={handleAvailableHoursChange}
+            className="w-16 border border-zinc-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+          />
+          <span className="text-xs text-zinc-500">h</span>
+          <span className="text-xs text-zinc-400 ml-1">({formatTime(availableMinutes)})</span>
+        </div>
+
+        <div className="space-y-3">
+          {/* 계획 완료 (실제) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-zinc-600">계획 완료 (실제)</span>
+              <span className="text-xs font-medium text-zinc-800">
+                {completedActualMinutes > 0 ? formatTime(completedActualMinutes) : "—"}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-zinc-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-green-500 rounded-full transition-all"
+                style={{ width: barWidth(completedActualMinutes) }}
+              />
+            </div>
+          </div>
+
+          {/* 미완료 예상 */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-zinc-600">미완료 예상</span>
+              <span className="text-xs font-medium text-zinc-800">
+                {pendingEstMinutes > 0 ? formatTime(pendingEstMinutes) : "—"}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-zinc-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-400 rounded-full transition-all"
+                style={{ width: barWidth(pendingEstMinutes) }}
+              />
+            </div>
+          </div>
+
+          {/* 미파악 시간 */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-zinc-500">미파악 시간</span>
+              <span className={`text-xs font-medium ${untrackedMinutes > 60 ? "text-orange-500" : "text-zinc-500"}`}>
+                {untrackedMinutes > 0 ? formatTime(untrackedMinutes) : "0m"}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-zinc-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-zinc-400 rounded-full transition-all"
+                style={{ width: barWidth(untrackedMinutes) }}
+              />
+            </div>
+            {untrackedMinutes > 0 && (
+              <p className="text-xs text-zinc-400 mt-1">
+                가용 {formatTime(availableMinutes)} − 완료 {formatTime(completedActualMinutes)} − 미완료예상 {formatTime(pendingEstMinutes)}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/daily/MorningTab.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+import type { DailyPlan, DailyPlanCategory } from "@/app/daily/page";
+import TimeInput, { formatTime } from "@/components/daily/TimeInput";
+
+interface MonthlyPlan {
+  id: string;
+  title: string;
+  goal?: { id: string; title: string; category?: DailyPlanCategory | null } | null;
+  status: string;
+}
+
+interface MorningTabProps {
+  date: string;
+  plans: DailyPlan[];
+  onRefresh: () => void;
+}
+
+export default function MorningTab({ date, plans, onRefresh }: MorningTabProps) {
+  const [monthlyPlans, setMonthlyPlans] = useState<MonthlyPlan[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [customTitle, setCustomTitle] = useState("");
+  const [customEstimatedMinutes, setCustomEstimatedMinutes] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
+  // 예상 시간 편집 중인 계획 id → 임시 값
+  const [editingEstId, setEditingEstId] = useState<string | null>(null);
+  const [editingEstValue, setEditingEstValue] = useState<number | null>(null);
+
+  const alreadyAddedPlanIds = new Set(
+    plans.filter((p) => p.monthlyPlan).map((p) => p.monthlyPlan!.id)
+  );
+
+  const d = new Date(date + "T00:00:00");
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+
+  useEffect(() => {
+    fetch(`/api/monthly-plans?year=${year}&month=${month}`)
+      .then((r) => r.json())
+      .then((data) =>
+        setMonthlyPlans(data.filter((p: MonthlyPlan) => p.status === "ACTIVE"))
+      );
+  }, [year, month]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleCat(key: string) {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  function openEstEditor(plan: DailyPlan) {
+    setEditingEstId(plan.id);
+    setEditingEstValue(plan.estimatedMinutes ?? null);
+  }
+
+  function closeEstEditor() {
+    setEditingEstId(null);
+    setEditingEstValue(null);
+  }
+
+  async function saveEstimatedMinutes(planId: string) {
+    await fetch("/api/daily-plans", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: planId, estimatedMinutes: editingEstValue }),
+    });
+    closeEstEditor();
+    onRefresh();
+  }
+
+  async function handleAddFromMonthly() {
+    if (selectedIds.size === 0) return;
+    setAdding(true);
+    try {
+      await fetch("/api/daily-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date, fromMonthlyPlanIds: [...selectedIds] }),
+      });
+      setSelectedIds(new Set());
+      onRefresh();
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleAddCustom(e: React.FormEvent) {
+    e.preventDefault();
+    if (!customTitle.trim()) return;
+    setAdding(true);
+    try {
+      await fetch("/api/daily-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          title: customTitle.trim(),
+          estimatedMinutes: customEstimatedMinutes,
+        }),
+      });
+      setCustomTitle("");
+      setCustomEstimatedMinutes(null);
+      setShowCustomForm(false);
+      onRefresh();
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    await fetch(`/api/daily-plans?id=${id}`, { method: "DELETE" });
+    onRefresh();
+  }
+
+  const availableMonthlyPlans = monthlyPlans.filter(
+    (mp) => !alreadyAddedPlanIds.has(mp.id)
+  );
+
+  // 카테고리별 그룹핑
+  const grouped = plans.reduce((acc, plan) => {
+    const cat = plan.goal?.category ?? null;
+    const key = cat?.id ?? "__none__";
+    if (!acc[key]) acc[key] = { category: cat, plans: [] };
+    acc[key].plans.push(plan);
+    return acc;
+  }, {} as Record<string, { category: DailyPlanCategory | null; plans: DailyPlan[] }>);
+
+  const groups = Object.values(grouped).sort((a, b) => {
+    if (!a.category && b.category) return 1;
+    if (a.category && !b.category) return -1;
+    return (a.category?.name ?? "").localeCompare(b.category?.name ?? "");
+  });
+
+  // 예상 시간 합계 (estimatedMinutes가 있는 항목만)
+  const totalEstimatedMinutes = plans.reduce(
+    (sum, p) => sum + (p.estimatedMinutes ?? 0),
+    0
+  );
+  const plansWithEst = plans.filter((p) => p.estimatedMinutes != null).length;
+
+  return (
+    <div className="p-4 max-w-2xl space-y-6 md:p-6">
+      {/* 오늘의 계획 목록 */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide">
+            📋 오늘의 계획 ({plans.length}개)
+          </h3>
+          {plansWithEst > 0 && (
+            <span className="text-xs text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full font-medium">
+              총 예상 {formatTime(totalEstimatedMinutes)}
+            </span>
+          )}
+        </div>
+
+        {plans.length === 0 ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+            <p className="text-amber-700 font-medium mb-1">아직 오늘 계획이 없습니다</p>
+            <p className="text-sm text-amber-600">아래에서 월간계획을 가져오거나 직접 추가하세요</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groups.map((group) => {
+              const cat = group.category;
+              const key = cat?.id ?? "__none__";
+              const isCollapsed = collapsedCats.has(key);
+
+              return (
+                <div key={key}>
+                  {/* 카테고리 헤더 */}
+                  <button
+                    onClick={() => toggleCat(key)}
+                    className="flex items-center gap-2 w-full mb-2"
+                  >
+                    <span className="text-base">{cat?.icon ?? "📌"}</span>
+                    <span className="text-xs font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                      {cat?.name ?? "미분류"}
+                    </span>
+                    <span className="text-xs text-zinc-400">{group.plans.length}개</span>
+                    <span
+                      className="text-zinc-400 transition-transform duration-200 ml-auto"
+                      style={{ transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)" }}
+                    >
+                      ›
+                    </span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="space-y-2 pl-4 border-l-2" style={{ borderColor: cat?.color ? cat.color + "40" : "#E4E4E7" }}>
+                      {group.plans.map((plan) => (
+                        <div
+                          key={plan.id}
+                          className={`bg-white border rounded-xl px-4 py-3 ${
+                            plan.rolledOver ? "border-orange-200 bg-orange-50/40" : "border-zinc-200"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-zinc-800">{plan.title}</p>
+                              <div className="flex items-center justify-between mt-1">
+                                <div className="flex gap-2">
+                                  {plan.monthlyPlan && (
+                                    <span className="text-xs text-zinc-400">📅 {plan.monthlyPlan.title}</span>
+                                  )}
+                                  {plan.rolledOver && (
+                                    <span className="text-xs text-orange-500">↩ 넘어온 항목</span>
+                                  )}
+                                </div>
+                                {/* 예상 시간 - 제목 아래 우측 */}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    editingEstId === plan.id ? closeEstEditor() : openEstEditor(plan)
+                                  }
+                                >
+                                  {plan.estimatedMinutes != null ? (
+                                    <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-100 hover:bg-blue-100 transition-colors">
+                                      ⏱ {formatTime(plan.estimatedMinutes)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-zinc-300 hover:text-blue-400 transition-colors">
+                                      + 예상 시간
+                                    </span>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleDelete(plan.id)}
+                              className="text-xs text-zinc-300 hover:text-red-400 transition-colors shrink-0"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* 예상 시간 인라인 편집기 */}
+                          {editingEstId === plan.id && (
+                            <div className="mt-3 pt-3 border-t border-zinc-100">
+                              <p className="text-xs text-zinc-500 mb-2">예상 소요 시간</p>
+                              <TimeInput
+                                value={editingEstValue}
+                                onChange={setEditingEstValue}
+                              />
+                              <div className="flex gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => saveEstimatedMinutes(plan.id)}
+                                  className="flex-1 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors"
+                                >
+                                  저장
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={closeEstEditor}
+                                  className="flex-1 py-1.5 bg-zinc-100 text-zinc-600 text-xs rounded-lg hover:bg-zinc-200 transition-colors"
+                                >
+                                  취소
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 월간계획에서 가져오기 */}
+      {availableMonthlyPlans.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">
+            📅 이번 달 계획에서 가져오기
+          </h3>
+          <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden">
+            {/* 카테고리별 그룹핑 */}
+            {(() => {
+              const grouped = availableMonthlyPlans.reduce((acc, mp) => {
+                const cat = mp.goal?.category ?? null;
+                const key = cat?.id ?? "__none__";
+                if (!acc[key]) acc[key] = { category: cat, plans: [] };
+                acc[key].plans.push(mp);
+                return acc;
+              }, {} as Record<string, { category: DailyPlanCategory | null; plans: MonthlyPlan[] }>);
+
+              const groups = Object.values(grouped).sort((a, b) => {
+                if (!a.category && b.category) return 1;
+                if (a.category && !b.category) return -1;
+                return (a.category?.name ?? "").localeCompare(b.category?.name ?? "");
+              });
+
+              return groups.map((group, gi) => {
+                const cat = group.category;
+                return (
+                  <div key={cat?.id ?? "__none__"} className={gi > 0 ? "border-t border-zinc-100" : ""}>
+                    {/* 카테고리 구분 헤더 */}
+                    <div
+                      className="flex items-center gap-2 px-4 py-2 sticky top-0 bg-zinc-50"
+                      style={{ borderLeft: `3px solid ${cat?.color ?? "#E4E4E7"}` }}
+                    >
+                      <span className="text-sm">{cat?.icon ?? "📌"}</span>
+                      <span className="text-xs font-bold" style={{ color: cat?.color ?? "#6B7280" }}>
+                        {cat?.name ?? "미분류"}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-zinc-50">
+                      {group.plans.map((mp) => {
+                        const isSelected = selectedIds.has(mp.id);
+                        return (
+                          <label
+                            key={mp.id}
+                            className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                              isSelected ? "bg-blue-50" : "hover:bg-zinc-50"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelect(mp.id)}
+                              className="rounded"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-zinc-800">{mp.title}</p>
+                              {mp.goal && (
+                                <p className="text-xs text-zinc-400">→ 🎯 {mp.goal.title}</p>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+
+            {selectedIds.size > 0 && (
+              <div className="px-4 py-3 bg-blue-50 border-t border-blue-100">
+                <button
+                  onClick={handleAddFromMonthly}
+                  disabled={adding}
+                  className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {adding ? "추가 중..." : `선택한 ${selectedIds.size}개 오늘 계획에 추가`}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 직접 추가 */}
+      <div>
+        <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">
+          ✏️ 직접 추가
+        </h3>
+        {showCustomForm ? (
+          <form onSubmit={handleAddCustom} className="bg-white border border-zinc-200 rounded-xl p-4 space-y-3">
+            <input
+              type="text"
+              value={customTitle}
+              onChange={(e) => setCustomTitle(e.target.value)}
+              placeholder="오늘 할 일 입력..."
+              className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              autoFocus
+            />
+            <div>
+              <p className="text-xs text-zinc-500 mb-1.5">예상 소요 시간 (선택)</p>
+              <TimeInput
+                value={customEstimatedMinutes}
+                onChange={setCustomEstimatedMinutes}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={adding || !customTitle.trim()}
+                className="flex-1 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {adding ? "추가 중..." : "추가"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowCustomForm(false); setCustomTitle(""); setCustomEstimatedMinutes(null); }}
+                className="flex-1 py-2 bg-zinc-100 text-zinc-600 text-sm rounded-lg hover:bg-zinc-200 transition-colors"
+              >
+                취소
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button
+            onClick={() => setShowCustomForm(true)}
+            className="w-full py-3 border-2 border-dashed border-zinc-200 rounded-xl text-sm text-zinc-400 hover:border-blue-300 hover:text-blue-500 transition-colors"
+          >
+            + 월간계획 외 할 일 직접 추가
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/daily/TimeInput.tsx ===
+"use client";
+
+interface TimeInputProps {
+  value: number | null;
+  onChange: (minutes: number | null) => void;
+}
+
+const CHIPS = [
+  { label: "30m", minutes: 30 },
+  { label: "1h", minutes: 60 },
+  { label: "1.5h", minutes: 90 },
+  { label: "2h", minutes: 120 },
+  { label: "3h", minutes: 180 },
+];
+
+export function formatTime(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+function hoursToMinutes(h: number): number {
+  return Math.round(h * 60);
+}
+
+export default function TimeInput({ value, onChange }: TimeInputProps) {
+  const hoursStr = value !== null ? String(value / 60) : "";
+
+  function handleChip(minutes: number) {
+    onChange(value === minutes ? null : minutes);
+  }
+
+  function handleInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value;
+    if (raw === "") {
+      onChange(null);
+      return;
+    }
+    const h = parseFloat(raw);
+    if (!isNaN(h) && h >= 0) {
+      onChange(hoursToMinutes(h));
+    }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-1">
+        {CHIPS.map((chip) => (
+          <button
+            key={chip.minutes}
+            type="button"
+            onClick={() => handleChip(chip.minutes)}
+            className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+              value === chip.minutes
+                ? "bg-blue-500 text-white border-blue-500"
+                : "bg-white text-zinc-600 border-zinc-200 hover:border-blue-300 hover:text-blue-600"
+            }`}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          min="0"
+          max="24"
+          step="0.5"
+          value={hoursStr}
+          onChange={handleInput}
+          placeholder="0"
+          className="w-16 border border-zinc-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+        <span className="text-xs text-zinc-400">h</span>
+        {value !== null && value > 0 && (
+          <span className="text-xs text-blue-500 font-medium">{formatTime(value)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/goals/GoalCard.tsx ===
+"use client";
+
+import Link from "next/link";
+
+interface Goal {
+  id: string;
+  year: number;
+  title: string;
+  description?: string | null;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  _count?: { dailyLogs: number };
+  monthlyPlans?: { id: string }[];
+}
+
+interface GoalCardProps {
+  goal: Goal;
+  onEdit: (goal: Goal) => void;
+  onDelete: (id: string) => void;
+  onStatusChange: (id: string, status: Goal["status"]) => void;
+}
+
+const statusLabel: Record<Goal["status"], string> = {
+  ACTIVE: "진행 중",
+  COMPLETED: "완료",
+  DROPPED: "중단",
+};
+
+const statusColor: Record<Goal["status"], string> = {
+  ACTIVE: "bg-green-100 text-green-700",
+  COMPLETED: "bg-blue-100 text-blue-700",
+  DROPPED: "bg-zinc-100 text-zinc-500",
+};
+
+export default function GoalCard({ goal, onEdit, onDelete, onStatusChange }: GoalCardProps) {
+  return (
+    <div className="bg-white border border-zinc-200 rounded-xl p-5 hover:shadow-sm transition-shadow">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs text-zinc-400">{goal.year}년</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[goal.status]}`}>
+              {statusLabel[goal.status]}
+            </span>
+          </div>
+          <Link
+            href={`/goals/${goal.id}`}
+            className="text-base font-semibold text-zinc-800 hover:text-blue-600 transition-colors block truncate"
+          >
+            🎯 {goal.title}
+          </Link>
+          {goal.description && (
+            <p className="text-sm text-zinc-500 mt-1 line-clamp-2">{goal.description}</p>
+          )}
+          <div className="flex gap-4 mt-3 text-xs text-zinc-400">
+            <span>월간계획 {goal.monthlyPlans?.length ?? 0}개</span>
+            <span>기록 {goal._count?.dailyLogs ?? 0}회</span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => onEdit(goal)}
+            className="text-xs px-3 py-2 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50 rounded transition-colors md:px-2 md:py-1"
+          >
+            수정
+          </button>
+          {goal.status === "ACTIVE" ? (
+            <button
+              onClick={() => onStatusChange(goal.id, "COMPLETED")}
+              className="text-xs px-3 py-2 text-blue-600 hover:bg-blue-50 rounded transition-colors md:px-2 md:py-1"
+            >
+              완료
+            </button>
+          ) : (
+            <button
+              onClick={() => onStatusChange(goal.id, "ACTIVE")}
+              className="text-xs px-3 py-2 text-green-600 hover:bg-green-50 rounded transition-colors md:px-2 md:py-1"
+            >
+              재개
+            </button>
+          )}
+          <button
+            onClick={() => onDelete(goal.id)}
+            className="text-xs px-3 py-2 text-red-500 hover:bg-red-50 rounded transition-colors md:px-2 md:py-1"
+          >
+            삭제
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/goals/GoalForm.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+
+interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+}
+
+interface GoalFormProps {
+  initialData?: {
+    id?: string;
+    year?: number;
+    title?: string;
+    description?: string | null;
+    categoryId?: string | null;
+  };
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+export default function GoalForm({ initialData, onSuccess, onCancel }: GoalFormProps) {
+  const currentYear = new Date().getFullYear();
+  const [year, setYear] = useState(initialData?.year ?? currentYear);
+  const [title, setTitle] = useState(initialData?.title ?? "");
+  const [description, setDescription] = useState(initialData?.description ?? "");
+  const [categoryId, setCategoryId] = useState(initialData?.categoryId ?? "");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const isEdit = !!initialData?.id;
+
+  useEffect(() => {
+    fetch("/api/categories").then((r) => r.json()).then((data) => {
+      if (Array.isArray(data)) setCategories(data);
+    });
+  }, []);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      if (isEdit) {
+        const res = await fetch(`/api/goals/${initialData.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: title.trim(),
+            description: description.trim() || null,
+            categoryId: categoryId || null,
+          }),
+        });
+        if (!res.ok) throw new Error("수정 실패");
+      } else {
+        const res = await fetch("/api/goals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            year,
+            title: title.trim(),
+            description: description.trim() || null,
+            categoryId: categoryId || null,
+          }),
+        });
+        if (!res.ok) throw new Error("생성 실패");
+      }
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "오류가 발생했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {!isEdit && (
+        <div>
+          <label className="block text-sm font-medium text-zinc-700 mb-1">연도</label>
+          <select
+            value={year}
+            onChange={(e) => setYear(parseInt(e.target.value))}
+            className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
+              <option key={y} value={y}>{y}년</option>
+            ))}
+          </select>
+        </div>
+      )}
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">카테고리</label>
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">카테고리 없음</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">목표 제목 *</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="예: AI 스킬 마스터리"
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">설명 (선택)</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="목표에 대한 추가 설명..."
+          rows={3}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        />
+      </div>
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+      <div className="flex gap-3 pt-2">
+        <button
+          type="submit"
+          disabled={loading || !title.trim()}
+          className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading ? "저장 중..." : isEdit ? "수정" : "추가"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-colors"
+        >
+          취소
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+[파트 8/10]
+
+=== FILE: ./components/layout/Header.tsx ===
+"use client";
+
+import Link from "next/link";
+
+interface HeaderProps {
+  title: string;
+  action?: {
+    label: string;
+    href?: string;
+    onClick?: () => void;
+  };
+}
+
+export default function Header({ title, action }: HeaderProps) {
+  return (
+    <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 bg-white md:px-6 md:py-4">
+      <h2 className="text-xl font-semibold text-zinc-800">{title}</h2>
+      {action && (
+        action.href ? (
+          <Link
+            href={action.href}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            {action.label}
+          </Link>
+        ) : (
+          <button
+            onClick={action.onClick}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            {action.label}
+          </button>
+        )
+      )}
+    </header>
+  );
+}
+
+
+=== FILE: ./components/layout/MobileHeader.tsx ===
+"use client";
+
+interface MobileHeaderProps {
+  onMenuClick: () => void;
+}
+
+export default function MobileHeader({ onMenuClick }: MobileHeaderProps) {
+  return (
+    <header className="flex items-center gap-3 px-4 py-3 border-b border-zinc-200 bg-white md:hidden">
+      <button
+        onClick={onMenuClick}
+        className="p-2 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 rounded-lg transition-colors"
+        aria-label="메뉴 열기"
+      >
+        ☰
+      </button>
+      <span className="text-base font-bold text-zinc-800">100억 목표 정렬</span>
+    </header>
+  );
+}
+
+
+=== FILE: ./components/layout/Sidebar.tsx ===
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const navItems = [
+  { href: "/", label: "대시보드", icon: "📊" },
+  { href: "/goals", label: "연간 목표", icon: "🎯" },
+  { href: "/monthly", label: "월간 계획", icon: "📅" },
+  { href: "/daily", label: "일간 기록", icon: "📝" },
+];
+
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const pathname = usePathname();
+
+  return (
+    <aside
+      className={`fixed inset-y-0 left-0 z-50 w-60 shrink-0 bg-zinc-900 text-white flex flex-col transition-transform duration-300 md:static md:translate-x-0 md:min-h-screen ${
+        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      }`}
+    >
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 text-zinc-400 hover:text-white md:hidden"
+        aria-label="메뉴 닫기"
+      >
+        ✕
+      </button>
+      <div className="px-6 py-5 border-b border-zinc-700">
+        <h1 className="text-lg font-bold">100억 목표 정렬</h1>
+        <p className="text-xs text-zinc-400 mt-0.5">Goal Alignment System</p>
+      </div>
+      <nav className="flex-1 px-3 py-4 space-y-1">
+        {navItems.map((item) => {
+          const isActive = pathname === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                isActive
+                  ? "bg-blue-600 text-white"
+                  : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              }`}
+            >
+              <span>{item.icon}</span>
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+      <div className="px-6 py-4 border-t border-zinc-700">
+        <p className="text-xs text-zinc-500">
+          {new Date().getFullYear()}년 목표 관리
+        </p>
+      </div>
+    </aside>
+  );
+}
+
+
+=== FILE: ./components/monthly/MonthlyPlanCard.tsx ===
+"use client";
+
+interface MonthlyPlan {
+  id: string;
+  year: number;
+  month: number;
+  title: string;
+  description?: string | null;
+  status: "ACTIVE" | "COMPLETED" | "DROPPED";
+  goal?: { id: string; title: string } | null;
+  _count?: { dailyLogs: number };
+}
+
+interface MonthlyPlanCardProps {
+  plan: MonthlyPlan;
+  onEdit: (plan: MonthlyPlan) => void;
+  onDelete: (id: string) => void;
+  onStatusChange: (id: string, status: MonthlyPlan["status"]) => void;
+}
+
+const statusColor: Record<MonthlyPlan["status"], string> = {
+  ACTIVE: "bg-green-100 text-green-700",
+  COMPLETED: "bg-blue-100 text-blue-700",
+  DROPPED: "bg-zinc-100 text-zinc-500",
+};
+
+const statusLabel: Record<MonthlyPlan["status"], string> = {
+  ACTIVE: "진행 중",
+  COMPLETED: "완료",
+  DROPPED: "중단",
+};
+
+export default function MonthlyPlanCard({ plan, onEdit, onDelete, onStatusChange }: MonthlyPlanCardProps) {
+  return (
+    <div className={`bg-white border rounded-xl p-4 transition-shadow hover:shadow-sm ${
+      plan.status === "COMPLETED" ? "border-blue-200 bg-blue-50/30" : "border-zinc-200"
+    }`}>
+      <div className="flex items-start gap-3">
+        <button
+          onClick={() => onStatusChange(plan.id, plan.status === "COMPLETED" ? "ACTIVE" : "COMPLETED")}
+          className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+            plan.status === "COMPLETED"
+              ? "bg-blue-600 border-blue-600 text-white"
+              : "border-zinc-300 hover:border-blue-400"
+          }`}
+        >
+          {plan.status === "COMPLETED" && <span className="text-xs">✓</span>}
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${statusColor[plan.status]}`}>
+              {statusLabel[plan.status]}
+            </span>
+            {plan.goal && (
+              <span className="text-xs text-zinc-400">→ 🎯 {plan.goal.title}</span>
+            )}
+          </div>
+          <p className={`text-sm font-medium ${plan.status === "COMPLETED" ? "line-through text-zinc-400" : "text-zinc-800"}`}>
+            {plan.title}
+          </p>
+          {plan.description && (
+            <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{plan.description}</p>
+          )}
+          <p className="text-xs text-zinc-400 mt-1">기록 {plan._count?.dailyLogs ?? 0}회</p>
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={() => onEdit(plan)}
+            className="text-xs px-3 py-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 rounded transition-colors md:px-2 md:py-1"
+          >
+            수정
+          </button>
+          <button
+            onClick={() => onDelete(plan.id)}
+            className="text-xs px-3 py-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors md:px-2 md:py-1"
+          >
+            삭제
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+=== FILE: ./components/monthly/MonthlyPlanForm.tsx ===
+"use client";
+
+import { useState, useEffect } from "react";
+
+interface Goal {
+  id: string;
+  title: string;
+}
+
+interface MonthlyPlanFormProps {
+  initialData?: {
+    id?: string;
+    title?: string;
+    description?: string | null;
+    goalId?: string | null;
+  };
+  year: number;
+  month: number;
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+export default function MonthlyPlanForm({
+  initialData,
+  year,
+  month,
+  onSuccess,
+  onCancel,
+}: MonthlyPlanFormProps) {
+  const [title, setTitle] = useState(initialData?.title ?? "");
+  const [description, setDescription] = useState(initialData?.description ?? "");
+  const [goalId, setGoalId] = useState(initialData?.goalId ?? "");
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const isEdit = !!initialData?.id;
+
+  useEffect(() => {
+    fetch(`/api/goals?year=${year}`)
+      .then((r) => r.json())
+      .then((data) => setGoals(data.filter((g: { status: string }) => g.status === "ACTIVE")));
+  }, [year]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      if (isEdit) {
+        const res = await fetch("/api/monthly-plans", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: initialData.id,
+            title: title.trim(),
+            description: description.trim() || null,
+            goalId: goalId || null,
+          }),
+        });
+        if (!res.ok) throw new Error("수정 실패");
+      } else {
+        const res = await fetch("/api/monthly-plans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            year,
+            month,
+            title: title.trim(),
+            description: description.trim() || null,
+            goalId: goalId || null,
+          }),
+        });
+        if (!res.ok) throw new Error("생성 실패");
+      }
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "오류가 발생했습니다");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">계획 제목 *</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="예: AI 강의 수강 완료"
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          required
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">설명 (선택)</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="이번 달 계획 세부 내용..."
+          rows={2}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-zinc-700 mb-1">연관 연간 목표</label>
+        <select
+          value={goalId}
+          onChange={(e) => setGoalId(e.target.value)}
+          className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">연결 없음</option>
+          {goals.map((g) => (
+            <option key={g.id} value={g.id}>🎯 {g.title}</option>
+          ))}
+        </select>
+      </div>
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+      <div className="flex gap-3 pt-2">
+        <button
+          type="submit"
+          disabled={loading || !title.trim()}
+          className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {loading ? "저장 중..." : isEdit ? "수정" : "추가"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-lg text-sm font-medium hover:bg-zinc-200 transition-colors"
+        >
+          취소
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+=== FILE: ./components/review/ReviewStats.tsx ===
+interface Stats {
+  totalLogs: number;
+  totalMinutes: number;
+  monthlyLinked: number;
+  goalAligned: number;
+  unrelated: number;
+  monthlyLinkedPct: number;
+  goalAlignedPct: number;
+  unrelatedPct: number;
+  goalBreakdown: Record<string, number>;
+  planBreakdown: Record<string, number>;
+}
+
+interface ReviewStatsProps {
+  stats: Stats;
+}
+
+export default function ReviewStats({ stats }: ReviewStatsProps) {
+  return (
+    <div className="space-y-4">
+      {/* Overview cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-zinc-800">{stats.totalLogs}</p>
+          <p className="text-xs text-zinc-400 mt-1">총 기록 수</p>
+        </div>
+        <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-zinc-800">
+            {Math.floor(stats.totalMinutes / 60)}h
+          </p>
+          <p className="text-xs text-zinc-400 mt-1">{stats.totalMinutes % 60}분 포함</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-blue-600">{stats.monthlyLinkedPct}%</p>
+          <p className="text-xs text-zinc-400 mt-1">📌 월간연결</p>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+          <p className="text-2xl font-bold text-amber-600">{stats.goalAlignedPct}%</p>
+          <p className="text-xs text-zinc-400 mt-1">🎯 목표연관</p>
+        </div>
+      </div>
+
+      {/* Alignment bar */}
+      {stats.totalLogs > 0 && (
+        <div>
+          <p className="text-xs font-medium text-zinc-500 mb-2">목표 정렬 분포</p>
+          <div className="flex h-6 rounded-full overflow-hidden">
+            {stats.monthlyLinked > 0 && (
+              <div className="bg-blue-500" style={{ width: `${stats.monthlyLinkedPct}%` }} />
+            )}
+            {stats.goalAligned > 0 && (
+              <div className="bg-amber-400" style={{ width: `${stats.goalAlignedPct}%` }} />
+            )}
+            {stats.unrelated > 0 && (
+              <div className="bg-zinc-200" style={{ width: `${stats.unrelatedPct}%` }} />
+            )}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500 mt-2">
+            <span>📌 {stats.monthlyLinked}회 ({stats.monthlyLinkedPct}%)</span>
+            <span>🎯 {stats.goalAligned}회 ({stats.goalAlignedPct}%)</span>
+            <span>⬜ {stats.unrelated}회 ({stats.unrelatedPct}%)</span>
+          </div>
+        </div>
+      )}
+
+      {/* Goal breakdown */}
+      {Object.keys(stats.goalBreakdown).length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-zinc-500 mb-2">목표별 활동</p>
+          <div className="space-y-1.5">
+            {Object.entries(stats.goalBreakdown)
+              .sort(([, a], [, b]) => b - a)
+              .map(([goal, count]) => (
+                <div key={goal} className="flex items-center gap-3 text-sm">
+                  <span className="flex-1 text-zinc-700">🎯 {goal}</span>
+                  <span className="text-zinc-400">{count}회</span>
+                  <div className="w-20 bg-zinc-100 rounded-full h-1.5">
+                    <div
+                      className="bg-amber-400 h-1.5 rounded-full"
+                      style={{ width: `${(count / stats.totalLogs) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+[파트 9/10]
+
+=== FILE: ./eslint.config.mjs ===
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+
+
+=== FILE: ./lib/claude.ts ===
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+interface ReviewStats {
+  totalLogs: number;
+  totalMinutes: number;
+  monthlyLinked: number;
+  goalAligned: number;
+  unrelated: number;
+  monthlyLinkedPct: number;
+  goalAlignedPct: number;
+  unrelatedPct: number;
+  goalBreakdown: Record<string, number>;
+  planBreakdown: Record<string, number>;
+}
+
+interface GoalInfo {
+  title: string;
+  description?: string | null;
+}
+
+export async function generateMonthlyReview(
+  year: number,
+  month: number,
+  stats: ReviewStats,
+  goals: GoalInfo[]
+): Promise<string> {
+  const monthName = new Date(year, month - 1).toLocaleString("ko-KR", {
+    month: "long",
+  });
+
+  const goalList = goals.map((g) => `- ${g.title}${g.description ? `: ${g.description}` : ""}`).join("\n");
+
+  const prompt = `당신은 개인 성장 코치입니다. 다음 데이터를 바탕으로 ${year}년 ${monthName} 회고를 작성해주세요.
+
+## 연간 목표
+${goalList || "설정된 목표 없음"}
+
+## ${year}년 ${monthName} 활동 통계
+- 총 기록 수: ${stats.totalLogs}개
+- 총 활동 시간: ${Math.floor(stats.totalMinutes / 60)}시간 ${stats.totalMinutes % 60}분
+- 월간계획 연결: ${stats.monthlyLinked}개 (${stats.monthlyLinkedPct}%)
+- 연간목표 연관: ${stats.goalAligned}개 (${stats.goalAlignedPct}%)
+- 기타 활동: ${stats.unrelated}개 (${stats.unrelatedPct}%)
+
+## 목표별 활동 분포
+${Object.entries(stats.goalBreakdown).map(([goal, count]) => `- ${goal}: ${count}회`).join("\n") || "없음"}
+
+## 월간계획별 활동 분포
+${Object.entries(stats.planBreakdown).map(([plan, count]) => `- ${plan}: ${count}회`).join("\n") || "없음"}
+
+다음 형식으로 회고를 작성해 주세요:
+
+## ${year}년 ${monthName} 회고
+
+### 이달의 성과
+(이번 달 잘한 점, 달성한 것들을 구체적으로)
+
+### 목표 달성도 분석
+(연간 목표 대비 이번 달 활동이 얼마나 정렬되었는지)
+
+### 개선할 점
+(다음 달에 개선해야 할 사항)
+
+### 다음 달 제안
+(다음 달에 집중해야 할 것들)
+
+### 한 줄 요약
+(이번 달을 한 문장으로)`;
+
+  const message = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 2000,
+    messages: [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+
+  const content = message.content[0];
+  if (content.type !== "text") {
+    throw new Error("Unexpected response type from Claude API");
+  }
+
+  return content.text;
+}
+
+
+=== FILE: ./lib/prisma.ts ===
+import { PrismaClient } from "@prisma/client";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+function createPrismaClient() {
+  const url = process.env.DATABASE_URL ?? "file:./prisma/dev.db";
+  const adapter = new PrismaLibSql({ url });
+  return new PrismaClient({
+    adapter,
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
+}
+
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+
+=== FILE: ./next-env.d.ts ===
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+import "./.next/dev/types/routes.d.ts";
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+
+
+=== FILE: ./next.config.ts ===
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+
+
+=== FILE: ./package.json ===
+{
+  "name": "p-kpi2",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
+    "@libsql/client": "^0.17.3",
+    "@prisma/adapter-libsql": "^7.8.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@types/pg": "^8.20.0",
+    "next": "16.2.6",
+    "pg": "^8.20.0",
+    "prisma": "^7.8.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+
+[파트 10/10]
+
+=== FILE: ./postcss.config.mjs ===
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+
+
+=== FILE: ./prisma.config.ts ===
+import path from "path";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: path.join("prisma", "schema.prisma"),
+  datasource: {
+    url: process.env.DATABASE_URL ?? "file:./prisma/dev.db",
+  },
+});
+
+
+=== FILE: ./prisma/schema.prisma ===
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  icon      String   @default("📌")
+  color     String   @default("#6B7280")
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  goals Goal[]
+}
+
+model Goal {
+  id          String   @id @default(cuid())
+  year        Int
+  title       String
+  description String?
+  status      String   @default("ACTIVE") // ACTIVE | COMPLETED | DROPPED
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  monthlyPlans MonthlyPlan[]
+  dailyLogs    DailyLog[]
+  dailyPlans   DailyPlan[]
+}
+
+model MonthlyPlan {
+  id          String   @id @default(cuid())
+  year        Int
+  month       Int
+  title       String
+  description String?
+  goalId      String?
+  goal        Goal?    @relation(fields: [goalId], references: [id])
+  status      String   @default("ACTIVE") // ACTIVE | COMPLETED | DROPPED
+  createdAt   DateTime @default(now())
+
+  dailyLogs  DailyLog[]
+  dailyPlans DailyPlan[]
+}
+
+model DailyLog {
+  id              String   @id @default(cuid())
+  date            DateTime
+  title           String
+  description     String?
+  durationMinutes Int?
+  alignmentType   String   // MONTHLY_LINKED | GOAL_ALIGNED | UNRELATED
+  monthlyPlanId   String?
+  monthlyPlan     MonthlyPlan? @relation(fields: [monthlyPlanId], references: [id])
+  goalId          String?
+  goal            Goal?        @relation(fields: [goalId], references: [id])
+  createdAt       DateTime @default(now())
+}
+
+model DailyPlan {
+  id               String   @id @default(cuid())
+  date             DateTime
+  title            String
+  monthlyPlanId    String?
+  monthlyPlan      MonthlyPlan? @relation(fields: [monthlyPlanId], references: [id])
+  goalId           String?
+  goal             Goal?        @relation(fields: [goalId], references: [id])
+  completed        Boolean  @default(false)
+  completedAt      DateTime?
+  note             String?      // 저녁 체크 시 메모
+  rolledOver       Boolean  @default(false) // 내일로 넘긴 항목
+  estimatedMinutes Int?         // 아침: 예상 소요 시간 (분)
+  actualMinutes    Int?         // 저녁: 실제 소요 시간 (분)
+  createdAt        DateTime @default(now())
+}
+
+model MonthlyReview {
+  id        String   @id @default(cuid())
+  year      Int
+  month     Int
+  content   String
+  stats     String   // JSON string
+  createdAt DateTime @default(now())
+
+  @@unique([year, month])
+}
+
+
+=== FILE: ./prisma/seed.ts ===
+import { PrismaClient } from "@prisma/client";
+import { PrismaLibSql } from "@prisma/adapter-libsql";
+import path from "path";
+
+const url = "file:" + path.resolve("prisma/dev.db");
+const adapter = new PrismaLibSql({ url });
+const prisma = new PrismaClient({ adapter });
+
+const CATEGORIES = [
+  { name: "부동산", icon: "🏢", color: "#3B82F6", order: 1 },
+  { name: "강의",   icon: "📚", color: "#F59E0B", order: 2 },
+  { name: "주식",   icon: "📈", color: "#10B981", order: 3 },
+  { name: "파이프라인", icon: "🔗", color: "#8B5CF6", order: 4 },
+  { name: "모임",   icon: "🤝", color: "#06B6D4", order: 5 },
+  { name: "독서",   icon: "📖", color: "#84CC16", order: 6 },
+  { name: "AI",     icon: "🤖", color: "#F97316", order: 7 },
+  { name: "회사",   icon: "🏬", color: "#EF4444", order: 8 },
+  { name: "건강",   icon: "💪", color: "#EC4899", order: 9 },
+  { name: "가족",   icon: "👨‍👩‍👧", color: "#6B7280", order: 10 },
+];
+
+// 목표 제목 키워드 → 카테고리 매핑
+const KEYWORD_MAP: { keywords: string[]; category: string }[] = [
+  { keywords: ["부동산", "경매", "아파트", "자산관리"], category: "부동산" },
+  { keywords: ["강의", "수강생", "런칭", "커리큘럼"], category: "강의" },
+  { keywords: ["주식", "ETF", "포트폴리오", "투자"], category: "주식" },
+  { keywords: ["파이프라인", "자동화", "수익형", "사이트"], category: "파이프라인" },
+  { keywords: ["모임", "네트워킹", "멘토"], category: "모임" },
+  { keywords: ["독서", "독서 노트", "책"], category: "독서" },
+  { keywords: ["AI", "에이전트", "ai"], category: "AI" },
+  { keywords: ["매출", "클라이언트", "팀", "회사"], category: "회사" },
+  { keywords: ["건강", "체중", "운동", "kg"], category: "건강" },
+  { keywords: ["가족", "여행", "부모님", "용돈"], category: "가족" },
+];
+
+async function main() {
+  console.log("🌱 Seeding categories...");
+
+  // 카테고리 생성 (이미 있으면 스킵)
+  const catMap: Record<string, string> = {};
+  for (const cat of CATEGORIES) {
+    const existing = await prisma.category.findFirst({ where: { name: cat.name } });
+    if (existing) {
+      catMap[cat.name] = existing.id;
+      console.log(`  ✓ 이미 존재: ${cat.icon} ${cat.name}`);
+    } else {
+      const created = await prisma.category.create({ data: cat });
+      catMap[cat.name] = created.id;
+      console.log(`  + 생성: ${cat.icon} ${cat.name}`);
+    }
+  }
+
+  // 기존 목표에 카테고리 자동 배정
+  console.log("\n🎯 Assigning categories to goals...");
+  const goals = await prisma.goal.findMany({ where: { categoryId: null } });
+  let assigned = 0;
+
+  for (const goal of goals) {
+    const lowerTitle = goal.title.toLowerCase();
+    let matched: string | null = null;
+
+    for (const { keywords, category } of KEYWORD_MAP) {
+      if (keywords.some((k) => lowerTitle.includes(k.toLowerCase()))) {
+        matched = category;
+        break;
+      }
+    }
+
+    if (matched && catMap[matched]) {
+      await prisma.goal.update({
+        where: { id: goal.id },
+        data: { categoryId: catMap[matched] },
+      });
+      console.log(`  ✓ "${goal.title}" → ${matched}`);
+      assigned++;
+    } else {
+      console.log(`  ? "${goal.title}" → 미분류 (수동 배정 필요)`);
+    }
+  }
+
+  console.log(`\n✅ 완료: 카테고리 ${CATEGORIES.length}개, 목표 ${assigned}/${goals.length}개 배정`);
+}
+
+main()
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(() => prisma.$disconnect());
+
+
+=== FILE: ./tsconfig.json ===
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+
+
+

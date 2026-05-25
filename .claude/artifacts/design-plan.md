@@ -1,0 +1,693 @@
+# 모바일 반응형 변경 계획서
+
+생성일: 2026-05-15
+브레이크포인트: `md` (768px) — 모바일(<768px) vs 데스크탑(>=768px)
+
+---
+
+## 레이아웃 구조 변경 방침
+
+- **데스크탑(md 이상)**: 기존 사이드바(w-60) + 메인 콘텐츠 가로 배치 유지
+- **모바일(md 미만)**: 사이드바 숨김, 햄버거 버튼으로 fixed overlay 오버레이 토글
+- 사이드바 상태(열림/닫힘)는 `app/layout.tsx`에서 `useState`로 관리
+- `app/layout.tsx`는 상태 관리가 필요하므로 `'use client'`로 변경
+- `export const metadata`는 Server Component 전용이므로 별도 파일로 분리
+
+---
+
+## 파일별 변경 계획
+
+### 우선순위 1 (필수) — 루트 레이아웃 & 사이드바
+
+---
+
+#### `app/layout.tsx`
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+// Server Component (metadata export 가능)
+export const metadata: Metadata = { ... };
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="ko" className={`${geistSans.variable} h-full`}>
+      <body className="flex h-full bg-zinc-50">
+        <Sidebar />
+        <main className="flex-1 flex flex-col overflow-auto">
+          {children}
+        </main>
+      </body>
+    </html>
+  );
+}
+```
+
+**변경 후 코드**
+```tsx
+'use client';
+// metadata는 Server Component에서만 export 가능하므로
+// 별도 app/metadata.ts 파일로 분리하거나 app/head.tsx를 활용한다.
+// 또는 layout.tsx를 두 개 레이어로 분리한다:
+//   app/layout.tsx (Server, metadata 담당) → app/client-layout.tsx (Client, 상태 담당)
+
+// 권장 구조:
+// app/layout.tsx (Server Component) → metadata export 유지, ClientLayout을 children으로 감쌈
+// app/client-layout.tsx (Client Component) → useState로 sidebarOpen 관리
+
+// app/layout.tsx (Server Component, 변경 최소)
+export const metadata: Metadata = { ... }; // 유지
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="ko" className={`${geistSans.variable} h-full`}>
+      <body className="h-full bg-zinc-50">
+        <ClientLayout>{children}</ClientLayout>
+      </body>
+    </html>
+  );
+}
+
+// app/client-layout.tsx (신규 생성, Client Component)
+'use client';
+export default function ClientLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  return (
+    <div className="flex h-full">
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {/* 모바일 오버레이 backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <main className="flex-1 flex flex-col overflow-auto">
+        <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
+        {children}
+      </main>
+    </div>
+  );
+}
+```
+
+**변경 이유**: `body`의 `flex`가 항상 가로 방향으로 작동해 모바일에서 사이드바가 화면의 67%를 점유한다. 상태 관리를 위해 Client Component 레이어를 분리하되 metadata export는 Server Component에 유지한다.
+
+---
+
+#### `components/layout/Sidebar.tsx`
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+export default function Sidebar() {
+  const pathname = usePathname();
+  return (
+    <aside className="w-60 shrink-0 bg-zinc-900 text-white flex flex-col min-h-screen">
+      ...
+    </aside>
+  );
+}
+```
+
+**변경 후 코드**
+```tsx
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const pathname = usePathname();
+  return (
+    <aside
+      className={`
+        fixed inset-y-0 left-0 z-50 w-60 shrink-0 bg-zinc-900 text-white flex flex-col
+        transition-transform duration-300
+        md:static md:translate-x-0 md:min-h-screen
+        ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}
+    >
+      {/* 모바일 닫기 버튼 */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 text-zinc-400 hover:text-white md:hidden"
+        aria-label="메뉴 닫기"
+      >
+        ✕
+      </button>
+      {/* 기존 내용 유지 */}
+      <div className="px-6 py-5 border-b border-zinc-700"> ... </div>
+      <nav className="flex-1 px-3 py-4 space-y-1"> ... </nav>
+      <div className="px-6 py-4 border-t border-zinc-700"> ... </div>
+    </aside>
+  );
+}
+```
+
+**변경 이유**: `w-60` 고정 너비에 반응형 분기가 전혀 없어 모바일에서 항상 240px를 차지한다. `fixed` + `translate-x` 토글 방식으로 모바일에서는 슬라이드 오버레이로, 데스크탑에서는 기존 고정 사이드바로 동작하게 한다.
+
+---
+
+#### `components/layout/MobileHeader.tsx` (신규 생성)
+
+**역할**: 모바일 전용 상단 바. 햄버거 버튼과 앱 타이틀을 표시한다.
+
+```tsx
+// 모바일에서만 표시 (md:hidden)
+// 데스크탑에서는 기존 Header 컴포넌트가 각 페이지에서 사용됨
+interface MobileHeaderProps {
+  onMenuClick: () => void;
+}
+
+export default function MobileHeader({ onMenuClick }: MobileHeaderProps) {
+  return (
+    <header className="flex items-center gap-3 px-4 py-3 border-b border-zinc-200 bg-white md:hidden">
+      <button
+        onClick={onMenuClick}
+        className="p-2 text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 rounded-lg transition-colors"
+        aria-label="메뉴 열기"
+      >
+        ☰
+      </button>
+      <span className="text-base font-bold text-zinc-800">100억 목표 정렬</span>
+    </header>
+  );
+}
+```
+
+**배치 클래스**: `flex items-center gap-3 px-4 py-3 border-b border-zinc-200 bg-white md:hidden`
+
+**변경 이유**: 모바일에서 사이드바를 숨겼으므로 햄버거 버튼으로 사이드바를 열 수 있는 진입점이 필요하다. 데스크탑에서는 `md:hidden`으로 숨겨 기존 레이아웃에 영향을 주지 않는다.
+
+---
+
+### 우선순위 2 (필수) — 날짜 헤더 overflow
+
+---
+
+#### `app/daily/page.tsx` (70-117번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex items-center justify-between mb-3">
+  <div className="flex items-center gap-3">
+    <button className="p-1.5 ...">←</button>
+    <input type="date" className="border ... px-3 py-1.5 text-sm" />
+    <button className="p-1.5 ...">→</button>
+    <span className="text-sm text-zinc-500">
+      {displayDate.toLocaleDateString("ko-KR", { weekday: "long", month: "long", day: "numeric" })}
+      {isToday && <span className="... px-2 py-0.5 rounded-full">오늘</span>}
+    </span>
+  </div>
+  {/* Progress badge: w-20 바 포함 */}
+  {totalCount > 0 && (
+    <div className="flex items-center gap-2"> ... </div>
+  )}
+</div>
+```
+
+**변경 후 코드**
+```tsx
+{/* 모바일: 두 줄 / 데스크탑: 한 줄 */}
+<div className="flex flex-col gap-2 mb-3 md:flex-row md:items-center md:justify-between">
+  {/* 날짜 네비게이션 행 */}
+  <div className="flex items-center gap-2">
+    <button className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors md:p-1.5">←</button>
+    <input
+      type="date"
+      className="border border-zinc-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 md:flex-none"
+    />
+    <button className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors md:p-1.5">→</button>
+    {/* 요일 텍스트: 모바일에서 숨김, md 이상에서 표시 */}
+    <span className="hidden text-sm text-zinc-500 md:inline">
+      {displayDate.toLocaleDateString("ko-KR", { weekday: "long", month: "long", day: "numeric" })}
+      {isToday && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">오늘</span>}
+    </span>
+  </div>
+  {/* 요일 텍스트: 모바일에서만 별도 행으로 표시 */}
+  <span className="text-sm text-zinc-500 md:hidden">
+    {displayDate.toLocaleDateString("ko-KR", { weekday: "long", month: "long", day: "numeric" })}
+    {isToday && <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">오늘</span>}
+  </span>
+  {/* Progress badge */}
+  {totalCount > 0 && (
+    <div className="flex items-center gap-2">
+      <div className="text-sm font-medium text-zinc-600">
+        <span className="text-blue-600 font-bold">{completedCount}</span>
+        <span className="text-zinc-400">/{totalCount}</span>
+        <span className="text-zinc-400 ml-1">완료</span>
+      </div>
+      <div className="w-20 h-2 bg-zinc-100 rounded-full overflow-hidden">
+        <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${...}%` }} />
+      </div>
+    </div>
+  )}
+</div>
+```
+
+**날짜 이동 버튼 터치 영역 개선**
+- 현재: `p-1.5` (터치 영역 ~28px)
+- 변경: `p-2.5 md:p-1.5` (모바일 ~40px, 데스크탑 기존 유지)
+
+**변경 이유**: `flex items-center justify-between` 한 줄 안에 날짜 picker, 요일 텍스트, Progress 배지가 모두 들어가 360px 화면에서 overflow가 발생한다. 모바일에서는 두 줄로 분리하고 요일 텍스트를 별도 행에 배치한다.
+
+---
+
+### 우선순위 3 (권장) — 월 선택 & Stats bar
+
+---
+
+#### `app/monthly/page.tsx` (103-126번 줄, Year/Month selector)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex items-center gap-3 mb-6">
+  <select className="border ... px-3 py-1.5 text-sm">...</select>
+  <div className="flex gap-1 flex-wrap">
+    {months.map((m) => (
+      <button className="px-3 py-1 rounded-lg text-sm ...">...</button>
+    ))}
+  </div>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+{/* 모바일: 연도 selector 단독 행, 월 버튼 별도 행 */}
+<div className="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
+  <select className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-auto">
+    ...
+  </select>
+  <div className="flex gap-1 flex-wrap">
+    {months.map((m) => (
+      <button
+        className="px-3 py-2 rounded-lg text-sm transition-colors md:py-1 ..."
+      >
+        {m}월
+      </button>
+    ))}
+  </div>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 요소 | 현재 | 변경 |
+|------|------|------|
+| 외부 wrapper | `flex items-center gap-3 mb-6` | `flex flex-col gap-3 mb-6 md:flex-row md:items-center` |
+| select | `px-3 py-1.5` | `px-3 py-2 w-full md:w-auto` |
+| 월 버튼 | `px-3 py-1` (터치 ~28px) | `px-3 py-2 md:py-1` (모바일 ~40px) |
+
+**변경 이유**: `select`와 12개 월 버튼이 같은 `flex` 행에서 시작해 좁은 화면에서 불규칙하게 줄바꿈된다. 연도 selector를 독립 행으로 분리하고 월 버튼의 터치 영역을 늘린다.
+
+---
+
+#### `app/monthly/page.tsx` (130-147번 줄, Stats bar)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="bg-white border border-zinc-200 rounded-xl p-4 mb-5 flex items-center gap-6 text-sm">
+  <span className="text-zinc-500">...</span>
+  <div className="flex-1 bg-zinc-100 rounded-full h-2">...</div>
+  <Link href={...} className="text-sm text-blue-600 hover:underline shrink-0">
+    📋 월말 회고 보기 →
+  </Link>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+<div className="bg-white border border-zinc-200 rounded-xl p-4 mb-5 flex flex-col gap-3 text-sm md:flex-row md:items-center md:gap-6">
+  <span className="text-zinc-500">...</span>
+  <div className="flex-1 bg-zinc-100 rounded-full h-2">...</div>
+  <Link href={...} className="text-sm text-blue-600 hover:underline shrink-0 self-end md:self-auto">
+    📋 월말 회고 보기 →
+  </Link>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 요소 | 현재 | 변경 |
+|------|------|------|
+| Stats wrapper | `flex items-center gap-6` | `flex flex-col gap-3 md:flex-row md:items-center md:gap-6` |
+| 회고 링크 | (없음) | `self-end md:self-auto` 추가 |
+
+**변경 이유**: `flex gap-6` 한 줄에 텍스트+프로그레스 바+링크가 들어가 모바일에서 밀집되거나 링크 텍스트가 잘린다. 모바일에서 세로 배치로 전환한다.
+
+---
+
+### 우선순위 4 (권장) — 범례 flex-wrap
+
+---
+
+#### `app/page.tsx` (206-219번 줄, Legend)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex gap-6 text-sm">
+  <div className="flex items-center gap-1.5">...</div>
+  <div className="flex items-center gap-1.5">...</div>
+  <div className="flex items-center gap-1.5">...</div>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+<div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+  <div className="flex items-center gap-1.5">...</div>
+  <div className="flex items-center gap-1.5">...</div>
+  <div className="flex items-center gap-1.5">...</div>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `flex gap-6` | `flex flex-wrap gap-x-4 gap-y-2` |
+
+**변경 이유**: `flex-wrap` 없이 세 범례 항목이 고정 배치되어 360px 화면에서 overflow가 발생할 수 있다. `flex-wrap`과 세로 간격(`gap-y-2`)을 추가해 줄바꿈을 허용한다.
+
+---
+
+### 우선순위 5 (권장) — 회고 헤더 버튼
+
+---
+
+#### `app/review/[year]/[month]/page.tsx` (101-125번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 bg-white">
+  <div>
+    <h2 className="text-xl font-semibold text-zinc-800">{monthName} 회고</h2>
+    <Link href="/monthly" className="text-sm text-zinc-400 hover:text-zinc-600">← 월간 계획으로</Link>
+  </div>
+  <div className="flex gap-2">
+    <button ...>수정</button>
+    <button ...>재생성 / AI 회고 생성</button>
+  </div>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+<div className="flex flex-col gap-3 px-4 py-4 border-b border-zinc-200 bg-white md:flex-row md:items-center md:justify-between md:px-6">
+  <div>
+    <h2 className="text-xl font-semibold text-zinc-800">{monthName} 회고</h2>
+    <Link href="/monthly" className="text-sm text-zinc-400 hover:text-zinc-600">← 월간 계획으로</Link>
+  </div>
+  <div className="flex gap-2 self-end md:self-auto">
+    <button ...>수정</button>
+    <button ...>재생성 / AI 회고 생성</button>
+  </div>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 요소 | 현재 | 변경 |
+|------|------|------|
+| 헤더 wrapper | `flex items-center justify-between px-6 py-4` | `flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6` |
+| 버튼 그룹 | `flex gap-2` | `flex gap-2 self-end md:self-auto` |
+
+**변경 이유**: 제목과 버튼이 `justify-between`으로 같은 행에 배치되어 모바일에서 "AI 회고 생성" 버튼 텍스트가 제목과 겹치거나 잘릴 수 있다. 모바일에서 세로 배치로 전환한다.
+
+---
+
+### 우선순위 6 (권장) — flex-wrap 누락 수정
+
+---
+
+#### `app/goals/[id]/page.tsx` (78-82번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex gap-6 mt-4 text-sm text-zinc-500">
+  <span>월간 계획 {goal.monthlyPlans.length}개</span>
+  <span>기록 {goal.dailyLogs.length}회</span>
+  <span>총 {Math.floor(totalMinutes / 60)}시간 {totalMinutes % 60}분</span>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+<div className="flex flex-wrap gap-x-4 gap-y-1 mt-4 text-sm text-zinc-500">
+  <span>월간 계획 {goal.monthlyPlans.length}개</span>
+  <span>기록 {goal.dailyLogs.length}회</span>
+  <span>총 {Math.floor(totalMinutes / 60)}시간 {totalMinutes % 60}분</span>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `flex gap-6` | `flex flex-wrap gap-x-4 gap-y-1` |
+
+**변경 이유**: `flex-wrap` 없이 세 항목이 한 줄에 나열되어 텍스트가 길어질 경우 모바일에서 overflow가 발생한다.
+
+---
+
+#### `components/review/ReviewStats.tsx` (58-63번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="flex gap-4 text-xs text-zinc-500 mt-2">
+  <span>📌 {stats.monthlyLinked}회 ({stats.monthlyLinkedPct}%)</span>
+  <span>🎯 {stats.goalAligned}회 ({stats.goalAlignedPct}%)</span>
+  <span>⬜ {stats.unrelated}회 ({stats.unrelatedPct}%)</span>
+</div>
+```
+
+**변경 후 코드**
+```tsx
+<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500 mt-2">
+  <span>📌 {stats.monthlyLinked}회 ({stats.monthlyLinkedPct}%)</span>
+  <span>🎯 {stats.goalAligned}회 ({stats.goalAlignedPct}%)</span>
+  <span>⬜ {stats.unrelated}회 ({stats.unrelatedPct}%)</span>
+</div>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `flex gap-4` | `flex flex-wrap gap-x-4 gap-y-1` |
+
+**변경 이유**: `flex-wrap` 없이 세 항목이 한 줄에 배치되어 모바일 화면에서 잘릴 수 있다.
+
+---
+
+### 우선순위 7 (선택) — 터치 영역 개선
+
+---
+
+#### `components/goals/GoalCard.tsx` (60-86번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<button className="text-xs px-2 py-1 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50 rounded transition-colors">
+  수정
+</button>
+<button className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded transition-colors">
+  완료
+</button>
+<button className="text-xs px-2 py-1 text-red-500 hover:bg-red-50 rounded transition-colors">
+  삭제
+</button>
+```
+
+**변경 후 코드**
+```tsx
+<button className="text-xs px-3 py-2 text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50 rounded transition-colors md:px-2 md:py-1">
+  수정
+</button>
+<button className="text-xs px-3 py-2 text-blue-600 hover:bg-blue-50 rounded transition-colors md:px-2 md:py-1">
+  완료
+</button>
+<button className="text-xs px-3 py-2 text-red-500 hover:bg-red-50 rounded transition-colors md:px-2 md:py-1">
+  삭제
+</button>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `px-2 py-1` | `px-3 py-2 md:px-2 md:py-1` |
+
+**변경 이유**: `py-1`(약 20px 터치 영역)이 권장 최소 터치 영역(44px)에 크게 못 미친다. 모바일에서 `py-2`로 터치 영역을 약 36px로 확대한다.
+
+---
+
+#### `components/monthly/MonthlyPlanCard.tsx` (67-78번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<button className="text-xs px-2 py-1 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 rounded transition-colors">수정</button>
+<button className="text-xs px-2 py-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">삭제</button>
+```
+
+**변경 후 코드**
+```tsx
+<button className="text-xs px-3 py-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50 rounded transition-colors md:px-2 md:py-1">수정</button>
+<button className="text-xs px-3 py-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors md:px-2 md:py-1">삭제</button>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `px-2 py-1` | `px-3 py-2 md:px-2 md:py-1` |
+
+**변경 이유**: GoalCard와 동일한 패턴. 모바일 터치 영역 부족.
+
+---
+
+#### `components/daily/DailyLogForm.tsx` (137번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<input
+  type="number"
+  className="w-32 border border-zinc-300 rounded-lg px-3 py-2 text-sm ..."
+/>
+```
+
+**변경 후 코드**
+```tsx
+<input
+  type="number"
+  className="w-full border border-zinc-300 rounded-lg px-3 py-2 text-sm ... md:w-32"
+/>
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `w-32` | `w-full md:w-32` |
+
+**변경 이유**: `w-32` 고정 너비로 폼 전체가 `w-full`인데 이 input만 고정이라 모바일에서 시각적으로 일관성이 깨진다.
+
+---
+
+### 우선순위 8 (선택) — 패딩 반응형
+
+---
+
+#### `components/layout/Header.tsx` (16번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<header className="flex items-center justify-between px-6 py-4 border-b border-zinc-200 bg-white">
+```
+
+**변경 후 코드**
+```tsx
+<header className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 bg-white md:px-6 md:py-4">
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `px-6 py-4` | `px-4 py-3 md:px-6 md:py-4` |
+
+**변경 이유**: 작은 화면에서 `px-6`이 좌우 여백을 과도하게 차지한다. 모바일은 `px-4`로 축소한다.
+
+---
+
+#### `components/daily/MorningTab.tsx` (118번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="p-6 max-w-2xl space-y-6">
+```
+
+**변경 후 코드**
+```tsx
+<div className="p-4 max-w-2xl space-y-6 md:p-6">
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `p-6` | `p-4 md:p-6` |
+
+**변경 이유**: `p-6`(24px)이 모바일 좁은 화면에서 콘텐츠 영역을 불필요하게 줄인다.
+
+---
+
+#### `components/daily/EveningTab.tsx` (146번 줄)
+
+**현재 코드 (문제 있는 부분)**
+```tsx
+<div className="p-6 max-w-2xl space-y-6">
+```
+
+**변경 후 코드**
+```tsx
+<div className="p-4 max-w-2xl space-y-6 md:p-6">
+```
+
+**핵심 클래스 변경 요약**
+
+| 현재 | 변경 |
+|------|------|
+| `p-6` | `p-4 md:p-6` |
+
+**변경 이유**: MorningTab과 동일한 패턴.
+
+---
+
+## 신규 생성 파일 목록
+
+| 파일 경로 | 역할 |
+|-----------|------|
+| `app/client-layout.tsx` | Client Component. `useState`로 사이드바 open/close 상태 관리. Sidebar, MobileHeader 조합. |
+| `components/layout/MobileHeader.tsx` | 모바일 전용 상단 헤더. 햄버거 버튼 포함. `md:hidden`으로 데스크탑에서 숨김. |
+
+---
+
+## 변경 우선순위 요약
+
+### 1단계 (필수 — 전체 모바일 대응의 전제 조건)
+1. `app/layout.tsx` — Server/Client 분리, `ClientLayout` 도입
+2. `app/client-layout.tsx` (신규) — 사이드바 상태 관리
+3. `components/layout/Sidebar.tsx` — fixed overlay 방식으로 변경, `isOpen`/`onClose` props 추가
+4. `components/layout/MobileHeader.tsx` (신규) — 햄버거 버튼 헤더
+
+### 2단계 (필수 — 즉시 깨지는 페이지 수정)
+5. `app/daily/page.tsx` — 날짜 헤더 두 줄 분리, 날짜 이동 버튼 터치 영역 확대
+
+### 3단계 (권장 — 좁은 화면 어색함 해소)
+6. `app/monthly/page.tsx` — 월 선택 selector 분리, Stats bar 세로 배치
+7. `app/page.tsx` — 범례 `flex-wrap` 추가
+8. `app/review/[year]/[month]/page.tsx` — 헤더 버튼 세로 배치
+9. `app/goals/[id]/page.tsx` — 요약 `flex-wrap` 추가
+10. `components/review/ReviewStats.tsx` — 범례 `flex-wrap` 추가
+
+### 4단계 (선택 — 개선 권장)
+11. `components/goals/GoalCard.tsx` — 버튼 터치 영역 확대
+12. `components/monthly/MonthlyPlanCard.tsx` — 버튼 터치 영역 확대
+13. `components/daily/DailyLogForm.tsx` — 소요 시간 input `w-full md:w-32`
+14. `components/layout/Header.tsx` — 패딩 반응형
+15. `components/daily/MorningTab.tsx` — 패딩 반응형
+16. `components/daily/EveningTab.tsx` — 패딩 반응형
+
+---
+
+## PC 레이아웃 보호 원칙
+
+모든 변경에서 `md:` prefix를 사용해 데스크탑(>=768px) 동작을 명시적으로 보호한다.
+
+- 사이드바: `md:static md:translate-x-0` — 데스크탑에서 항상 표시
+- MobileHeader: `md:hidden` — 데스크탑에서 완전히 숨김
+- 오버레이 backdrop: `md:hidden` — 데스크탑에서 미표시
+- 패딩 축소: 모바일 기본값을 줄이고 `md:` prefix로 기존 값 복원
+- flex 방향: 모바일 `flex-col` 기본, `md:flex-row`로 데스크탑 가로 배치 복원
+
+

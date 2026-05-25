@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 interface MobileHeaderProps {
   onMenuClick: () => void;
 }
@@ -30,13 +32,14 @@ export default function MobileHeader({ onMenuClick }: MobileHeaderProps) {
         </svg>
       </button>
       <div className="flex items-center gap-2">
-        <div className="w-6 h-6 rounded-md flex items-center justify-center"
-          style={{ background: "linear-gradient(135deg, #4f7cff 0%, #a855f7 100%)" }}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-            <polyline points="16 7 22 7 22 13" />
-          </svg>
-        </div>
+        <Image
+          src="/icon.png"
+          alt="Stride"
+          width={28}
+          height={28}
+          className="h-7 w-7 rounded-lg"
+          priority
+        />
         <span className="text-sm font-bold text-slate-800">Stride</span>
       </div>
     </header>

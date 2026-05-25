@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -103,13 +104,14 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Logo */}
       <div className="px-5 py-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <Link href="/" onClick={onClose} className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: "linear-gradient(135deg, #4f7cff 0%, #a855f7 100%)" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-              <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-              <polyline points="16 7 22 7 22 13" />
-            </svg>
-          </div>
+          <Image
+            src="/icon.png"
+            alt="Stride"
+            width={32}
+            height={32}
+            className="h-8 w-8 shrink-0 rounded-lg"
+            priority
+          />
           <div>
             <h1 className="text-sm font-bold text-white leading-tight">Stride</h1>
             <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>Goal Alignment</p>

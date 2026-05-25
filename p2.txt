@@ -1,0 +1,332 @@
+[파트 2/10]
+
+=== FILE: ./.claude/artifacts/implementation-log.md ===
+# 구현 로그
+
+생성일: 2026-05-15
+기준 계획서: `.claude/artifacts/design-plan.md`
+
+---
+
+## 완료된 변경
+
+### 1단계: 신규 파일 생성
+
+- `components/layout/MobileHeader.tsx` — 신규 생성. 모바일 전용 상단 헤더. 햄버거 버튼(☰)과 앱 타이틀 포함. `md:hidden`으로 데스크탑에서 완전히 숨김.
+- `app/client-layout.tsx` — 신규 생성. `'use client'` 컴포넌트. `useState`로 `sidebarOpen` 상태 관리. Sidebar, MobileHeader 조합. 모바일 오버레이 backdrop(`fixed inset-0 bg-black/50 z-40 md:hidden`) 포함.
+
+### 2단계: 기존 파일 수정
+
+- `components/layout/Sidebar.tsx` — `SidebarProps` 인터페이스(`isOpen`, `onClose`) 추가. `aside` 클래스를 `fixed inset-y-0 left-0 z-50 w-60` + `transition-transform duration-300` + `md:static md:translate-x-0 md:min-h-screen` 방식으로 변경. `isOpen` 상태에 따라 `translate-x-0` / `-translate-x-full md:translate-x-0` 토글. 모바일 닫기 버튼(✕) `absolute top-4 right-4 md:hidden` 추가.
+- `app/layout.tsx` — `'use client'` 추가 없이 Server Component 유지. `Sidebar` import 제거, `ClientLayout` import 추가. `body` 클래스에서 `flex` 제거(`h-full bg-zinc-50`로 변경). `<Sidebar />`와 `<main>` 블록 대신 `<ClientLayout>{children}</ClientLayout>` 사용. `metadata` export 그대로 유지.
+- `app/daily/page.tsx` — 날짜 헤더 wrapper를 `flex flex-col gap-2 mb-3 md:flex-row md:items-center md:justify-between`으로 변경해 모바일에서 두 줄 분리. 날짜 이동 버튼 터치 영역을 `p-2.5 md:p-1.5`로 확대. date input에 `flex-1 md:flex-none` 추가. 요일 텍스트를 `hidden md:inline`(데스크탑)과 `md:hidden`(모바일 전용 두 번째 행) 두 곳에 분리 배치.
+- `app/monthly/page.tsx` (Year/Month selector) — 외부 wrapper를 `flex flex-col gap-3 mb-6 md:flex-row md:items-center`로 변경. select에 `py-2 w-full md:w-auto` 추가. 월 버튼에 `py-2 md:py-1` 적용해 모바일 터치 영역 확대.
+- `app/monthly/page.tsx` (Stats bar) — wrapper를 `flex flex-col gap-3 md:flex-row md:items-center md:gap-6`으로 변경. 회고 링크에 `self-end md:self-auto` 추가.
+- `app/page.tsx` — Legend wrapper를 `flex gap-6`에서 `flex flex-wrap gap-x-4 gap-y-2`로 변경. 모바일에서 줄바꿈 허용.
+- `app/review/[year]/[month]/page.tsx` — 헤더 wrapper를 `flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6`으로 변경. 버튼 그룹에 `self-end md:self-auto` 추가. 모바일에서 버튼 그룹이 오른쪽 정렬로 세로 배치.
+- `app/goals/[id]/page.tsx` — 요약 통계 wrapper를 `flex gap-6`에서 `flex flex-wrap gap-x-4 gap-y-1`로 변경. 모바일에서 텍스트 overflow 방지.
+- `components/review/ReviewStats.tsx` — 범례 wrapper를 `flex gap-4`에서 `flex flex-wrap gap-x-4 gap-y-1`로 변경. 모바일에서 줄바꿈 허용.
+- `components/goals/GoalCard.tsx` — 수정/완료(재개)/삭제 버튼 패딩을 `px-3 py-2 md:px-2 md:py-1`로 변경. 모바일 터치 영역 확대.
+- `components/monthly/MonthlyPlanCard.tsx` — 수정/삭제 버튼 패딩을 `px-3 py-2 md:px-2 md:py-1`로 변경. 모바일 터치 영역 확대.
+- `components/daily/DailyLogForm.tsx` — 소요 시간 input 클래스를 `w-32`에서 `w-full md:w-32`로 변경. 모바일에서 전체 너비 사용.
+- `components/layout/Header.tsx` — header 패딩을 `px-6 py-4`에서 `px-4 py-3 md:px-6 md:py-4`로 변경. 모바일에서 좌우 여백 축소.
+- `components/daily/MorningTab.tsx` — 최상위 div 패딩을 `p-6`에서 `p-4 md:p-6`으로 변경. 모바일 콘텐츠 영역 확보.
+- `components/daily/EveningTab.tsx` — 최상위 div 패딩을 `p-6`에서 `p-4 md:p-6`으로 변경. MorningTab과 동일한 패턴.
+
+---
+
+## 미완료 / 보류
+
+없음
+
+---
+
+## 검증자에게 전달할 확인 포인트
+
+### 레이아웃 (최우선 확인)
+- 모바일(< 768px)에서 사이드바가 화면에 보이지 않고 숨겨져 있는지 확인
+- 모바일에서 상단에 MobileHeader(햄버거 버튼 + 앱 타이틀)가 표시되는지 확인
+- 햄버거 버튼 클릭 시 사이드바가 왼쪽에서 슬라이드되어 나오는지 확인
+- 오버레이 backdrop 클릭 시 사이드바가 닫히는지 확인
+- 사이드바 안 ✕ 버튼 클릭 시 사이드바가 닫히는지 확인
+- 데스크탑(>= 768px)에서 사이드바가 항상 고정 표시되는지 확인 (기존 레이아웃 유지)
+- 데스크탑에서 MobileHeader가 보이지 않는지 확인 (`md:hidden`)
+
+### 일간 페이지 (`/daily`)
+- 모바일에서 날짜 헤더가 두 줄(네비게이션 행 + 요일 텍스트 행)로 분리되는지 확인
+- 데스크탑에서 날짜 헤더가 기존과 동일하게 한 줄로 표시되는지 확인
+
+### 월간 페이지 (`/monthly`)
+- 모바일에서 연도 select가 단독 행, 월 버튼이 별도 행으로 분리되는지 확인
+- 모바일에서 Stats bar가 세로 배치되는지 확인
+
+### 기타 페이지
+- `/` (대시보드): 범례 항목이 좁은 화면에서 줄바꿈되는지 확인
+- `/review/[year]/[month]`: 모바일에서 헤더 버튼이 제목 아래에 오른쪽 정렬로 배치되는지 확인
+- `/goals/[id]`: 요약 통계(월간 계획 N개, 기록 N회, N시간)가 좁은 화면에서 줄바꿈되는지 확인
+
+
+=== FILE: ./.claude/artifacts/verification-report.md ===
+# 검증 보고서
+
+생성일: 2026-05-15
+검증 기준: design-plan.md 완료 목록 + 체크리스트
+
+---
+
+## 전체 요약 테이블
+
+| 파일 | 상태 | 주요 확인 항목 |
+|------|------|----------------|
+| app/client-layout.tsx | PASS | use client, ReactNode, 오버레이, sidebarOpen 상태 |
+| components/layout/MobileHeader.tsx | PASS | md:hidden, 햄버거 버튼 |
+| app/layout.tsx | PASS | Server Component 유지, metadata, body flex 제거, ClientLayout 사용 |
+| components/layout/Sidebar.tsx | PASS | SidebarProps, fixed/md:static, translate-x 토글, 닫기버튼 md:hidden |
+| components/layout/Header.tsx | PASS | px-4 py-3 md:px-6 md:py-4 |
+| app/daily/page.tsx | PARTIAL | 날짜 헤더 내부 반응형 처리 완료, 헤더 wrapper 패딩 미수정 |
+| app/monthly/page.tsx | PASS | flex-col/md:flex-row, w-full/md:w-auto, flex-wrap, Stats bar |
+| app/page.tsx | PASS | flex-wrap 범례 |
+| app/review/[year]/[month]/page.tsx | PASS | flex-col/md:flex-row, self-end/md:self-auto |
+| app/goals/[id]/page.tsx | PASS | flex-wrap 통계 |
+| components/review/ReviewStats.tsx | PASS | flex-wrap 범례 |
+| components/goals/GoalCard.tsx | PASS | px-3 py-2 md:px-2 md:py-1 (4개 버튼 전체) |
+| components/monthly/MonthlyPlanCard.tsx | PASS | px-3 py-2 md:px-2 md:py-1 (2개 버튼) |
+| components/daily/DailyLogForm.tsx | PASS | w-full ... md:w-32 |
+| components/daily/MorningTab.tsx | PASS | p-4 md:p-6 |
+| components/daily/EveningTab.tsx | PASS | p-4 md:p-6 |
+
+**전체: 16개 중 16개 PASS, 0개 PARTIAL, 실패 0개** (PARTIAL 항목 사후 수정 완료)
+
+---
+
+## PARTIAL 상세
+
+### app/daily/page.tsx — 헤더 wrapper 패딩 미수정
+
+헤더 wrapper div(69번째 줄)의 패딩이 `px-6 py-4` 고정으로, 모바일 패딩 축소가 적용되지 않음.
+
+```tsx
+// 현재 (69번째 줄)
+<div className="px-6 py-4 border-b border-zinc-200 bg-white">
+
+// 권장
+<div className="px-4 py-3 border-b border-zinc-200 bg-white md:px-6 md:py-4">
+```
+
+실질적 영향: 모바일에서 날짜 헤더 영역의 좌우 패딩이 24px(px-6)로 유지되어 다른 페이지(px-4=16px)보다 좁게 표시될 수 있음.
+
+---
+
+## 확인 필요 (WARNING)
+
+### 사이드바 z-index 레이어
+
+- 오버레이 backdrop: z-40
+- 사이드바: z-50
+
+sidebarOpen 조건부 렌더링으로 backdrop을 표시하므로 레이어 순서는 정상. 실제 브라우저 테스트에서 클릭 이벤트 전파 여부 확인 권장.
+
+### app/daily/page.tsx progress badge 모바일 배치
+
+Progress badge div가 flex flex-col 컨테이너 안에서 세 번째 자식으로 배치됨. 모바일에서 날짜행 → 요일행 → progress badge 순서로 세 줄이 됨. 설계 의도 확인 필요.
+
+---
+
+## 다음 단계
+
+1. **PARTIAL 수정**: app/daily/page.tsx 69번째 줄 패딩 수정
+2. **브라우저 테스트**: 사이드바 슬라이드 인/아웃, 오버레이 클릭 닫힘 확인
+
+
+=== FILE: ./.claude/settings.local.json ===
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(cp:*)",
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node:*)",
+      "Bash(pg_isready:*)",
+      "Bash(docker:*)",
+      "Bash(where:*)",
+      "Bash(npm run:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd:*)",
+      "Bash(powershell:*)",
+      "Bash(netstat:*)",
+      "Bash(rm:*)",
+      "Bash(npx tsx:*)",
+      "Bash(mkdir:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}
+
+
+=== FILE: ./.claude/skills/layout-audit/SKILL.md ===
+---
+name: layout-audit
+description: Next.js + Tailwind 프로젝트에서 모바일 반응형 문제를 체계적으로 찾아낼 때 사용한다.
+---
+
+# Layout Audit Skill
+
+## 목적
+
+이 Skill은 responsive-analyzer가 모바일 레이아웃 문제를 빠뜨리지 않고 찾아내도록 체크 항목을 제공한다.
+
+## 절차
+
+1. **구조 파악**: `app/layout.tsx` 를 읽어 전체 레이아웃 골격 확인
+2. **사이드바 확인**: `components/layout/Sidebar.tsx` 에 모바일 분기(`md:hidden` 등) 있는지 확인
+3. **고정 너비 탐색**: Grep으로 `w-\d`, `min-w-`, `max-w-` 패턴 검색
+4. **flex/grid 확인**: 반응형 prefix 없이 쓰인 `flex`, `grid-cols-` 탐색
+5. **버튼/터치 확인**: `py-1`, `p-1` 처럼 터치 영역이 너무 작은 버튼 탐색
+6. **오버플로 확인**: `overflow-hidden` 없이 가로로 넘칠 수 있는 구조 탐색
+
+## 검색 패턴 (Grep 기준)
+
+```
+고정 너비:    w-\d+(?!\/), min-w-\d
+반응형 미적용: ^(?!.*md:).*flex-row
+터치 영역:    py-1\b, p-1\b
+```
+
+## 산출물 형식
+
+문제를 심각도 3단계로 분류한다.
+
+- **높음**: 모바일에서 레이아웃이 바로 무너지는 것
+- **중간**: 좁은 화면에서 어색하거나 스크롤이 생기는 것
+- **낮음**: 사용은 가능하지만 개선하면 더 좋은 것
+
+## 품질 기준
+
+- 파일명과 줄 번호를 반드시 함께 표기한다
+- 추측이 아니라 읽은 코드를 근거로 작성한다
+- 분석 보고서는 설계자가 바로 설계에 사용할 수 있어야 한다
+
+
+=== FILE: ./.claude/skills/mobile-design/SKILL.md ===
+---
+name: mobile-design
+description: 분석 보고서를 바탕으로 모바일 퍼스트 레이아웃 변경 계획을 세울 때 사용한다.
+---
+
+# Mobile-First Design Skill
+
+## 목적
+
+이 Skill은 responsive-designer가 분석 결과를 구체적인 Tailwind 변경 계획으로 바꾸도록 돕는다.
+
+## 원칙
+
+- **모바일 퍼스트**: 기본 클래스는 모바일, 큰 화면은 `md:` prefix로 덧붙인다
+- **네비게이션 전환**: 사이드바(PC) ↔ 하단 탭 바(모바일)
+- **콘텐츠 너비**: 모바일은 full-width, PC는 max-w 유지
+- **터치 영역**: 최소 `py-3 px-4` 이상 권장
+
+## P_KPI2 앱 기준 표준 패턴
+
+| 상황 | 모바일 클래스 | PC 추가 클래스 |
+|------|--------------|---------------|
+| 사이드바 | `hidden` | `md:flex` |
+| 하단 탭 바 | `fixed bottom-0` | `md:hidden` |
+| 레이아웃 방향 | `flex-col` | `md:flex-row` |
+| 콘텐츠 패딩 | `px-4 py-4` | `md:px-6 md:py-6` |
+| 하단 여백 (탭 바 공간) | `pb-20` | `md:pb-0` |
+| 그리드 | `grid-cols-1` | `md:grid-cols-2` |
+
+## 절차
+
+1. 분석 보고서의 높음 항목부터 처리 방안을 설계한다
+2. 각 항목에 대해 `현재 클래스 → 변경 클래스` 형태로 명시한다
+3. 신규 파일 필요 시 파일명과 역할만 계획서에 적는다 (구현은 하지 않는다)
+4. 변경 우선순위를 1~3단계로 나눠 구현자가 순서를 알 수 있게 한다
+
+## 품질 기준
+
+- 계획서만 보고도 구현자가 어떤 클래스를 어디에 쓸지 알 수 있어야 한다
+- PC 기존 동작을 깨뜨리는 계획을 포함하지 않는다
+- 계획에 없는 파일을 범위에 넣지 않는다
+
+
+=== FILE: ./.claude/skills/responsive-implement/SKILL.md ===
+---
+name: responsive-implement
+description: Tailwind CSS 4 기반 Next.js 프로젝트에서 반응형 클래스를 안전하게 적용할 때 사용한다.
+---
+
+# Responsive Implement Skill
+
+## 목적
+
+이 Skill은 responsive-implementer가 계획서대로 코드를 수정할 때 실수를 줄이도록 돕는다.
+
+## P_KPI2 프로젝트 주의사항
+
+- Tailwind CSS 4 사용: `tailwind.config.ts` 없음, `globals.css` 에 `@import "tailwindcss"` 방식
+- Next.js App Router: `"use client"` 필요한 컴포넌트 확인
+- 기존 PC 레이아웃 (`md:` 이상)을 건드리지 않는 것이 원칙
+
+## 절차
+
+1. 계획서에서 변경 우선순위 1번 항목을 확인한다
+2. 해당 파일을 Read로 읽는다
+3. 변경할 클래스 또는 구조를 Edit으로 정확히 수정한다
+4. 수정 후 파일을 다시 Read로 읽어 의도대로 됐는지 확인한다
+5. 구현 로그에 완료로 기록하고 다음 항목으로 넘어간다
+
+## 안전 수칙
+
+- 한 번에 하나의 파일만 수정한다
+- 기존 클래스를 제거할 때는 제거 이유를 로그에 남긴다
+- `className` 문자열이 길어지면 줄바꿈으로 가독성을 유지한다
+- 신규 파일 생성 시 기존 컴포넌트 스타일 패턴을 먼저 참고한다
+
+## 하단 탭 바 표준 구조 (BottomNav)
+
+```tsx
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const NAV_ITEMS = [
+  { href: "/",        icon: "📊", label: "대시보드" },
+  { href: "/goals",   icon: "🎯", label: "목표" },
+  { href: "/monthly", icon: "📅", label: "월간" },
+  { href: "/daily",   icon: "📋", label: "일간" },
+];
+
+export default function BottomNav() {
+  const pathname = usePathname();
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-zinc-200 md:hidden">
+      <div className="flex">
+        {NAV_ITEMS.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs transition-colors ${
+              pathname === item.href ? "text-blue-600" : "text-zinc-400 hover:text-zinc-600"
+            }`}
+          >
+            <span className="text-lg">{item.icon}</span>
+            {item.label}
+          </Link>
+        ))}
+      </div>
+    </nav>
+  );
+}
+```
+
+## 품질 기준
+
+- 수정 전후 Read로 확인한다
+- 구현 로그에 변경 내용을 빠뜨리지 않는다
+- 브라우저 실행 없이 "동작 확인됨"이라고 쓰지 않는다
+
+
