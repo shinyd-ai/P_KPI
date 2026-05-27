@@ -9,6 +9,40 @@ version over assumptions from older Next.js versions.
 
 # Codex Working Rules
 
+## Mandatory Implementation Planning
+
+Before making any code, configuration, database, deployment, or filesystem
+change for a user-requested development task, first provide a detailed
+implementation plan.
+
+The plan must include:
+
+- Goal
+- Scope
+- Non-goals
+- Files likely to change
+- Implementation steps
+- Verification steps
+- Risks or assumptions
+
+For very small changes, the plan may be concise but must still be explicit. For
+broad or multi-file work, create or update `.codex/artifacts/design-plan.md`
+before implementation.
+
+## Codex Team Configuration
+
+Use the Codex-native team model in `.codex/team/README.md` for project work.
+The role guides under `.codex/team/roles/` should shape planning and review:
+
+- `product-planner`
+- `frontend-designer`
+- `nextjs-engineer`
+- `data-auth-engineer`
+- `qa-release-reviewer`
+
+Use `.codex/workflows/development.md` for feature work, bug fixes, auth changes,
+DB-sensitive work, and broad UI changes.
+
 ## Responsive Work
 
 For mobile responsive work, use this Codex-native workflow instead of the
