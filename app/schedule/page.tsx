@@ -175,7 +175,7 @@ export default function SchedulePage() {
   const [saving, setSaving] = useState(false);
   const [draggingPlanId, setDraggingPlanId] = useState("");
   const [draggingBlockId, setDraggingBlockId] = useState("");
-  const [hoveredMoveCell, setHoveredMoveCell] = useState<{ date: string; hour: number } | null>(null);
+  const [hoveredMoveCell, setHoveredMoveCell] = useState<{ date: string; startMinutes: number } | null>(null);
   const [resizingBlockId, setResizingBlockId] = useState("");
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
@@ -239,6 +239,7 @@ export default function SchedulePage() {
   }, [startDate]);
 
   const selectedBlock = data?.timeBlocks.find((block) => block.id === selectedId) ?? null;
+  const draggingBlock = data?.timeBlocks.find((block) => block.id === draggingBlockId) ?? null;
 
   const stats = useMemo(() => {
     const blocks = data?.timeBlocks ?? [];
@@ -296,6 +297,42 @@ export default function SchedulePage() {
     setForm(blockToForm(block));
   }
 
+  function upsertBlockLocally(block: TimeBlock) {
+    setData((current) => {
+      if (!current) return current;
+
+      const blockDate = normalizeApiDate(block.date);
+      const isInWeek = blockDate >= current.startDate && blockDate <= current.endDate;
+      const timeBlocks = current.timeBlocks.filter((item) => item.id !== block.id);
+
+      if (isInWeek) {
+        timeBlocks.push(block);
+      }
+
+      timeBlocks.sort((a, b) => {
+        const dateCompare = normalizeApiDate(a.date).localeCompare(normalizeApiDate(b.date));
+        return dateCompare !== 0 ? dateCompare : a.startMinutes - b.startMinutes;
+      });
+
+      return {
+        ...current,
+        timeBlocks,
+        unplacedPlans: current.unplacedPlans.filter((plan) => plan.id !== block.dailyPlanId),
+      };
+    });
+  }
+
+  function removeBlockLocally(id: string) {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            timeBlocks: current.timeBlocks.filter((block) => block.id !== id),
+          }
+        : current
+    );
+  }
+
   async function saveBlock(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -328,7 +365,7 @@ export default function SchedulePage() {
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "저장하지 못했습니다.");
-      await fetchSchedule();
+      upsertBlockLocally(json);
       setSelectedId(json.id);
       setForm(blockToForm(json));
     } catch (err) {
@@ -361,7 +398,7 @@ export default function SchedulePage() {
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "시간블록을 만들지 못했습니다.");
-      await fetchSchedule();
+      upsertBlockLocally(json);
       setSelectedId(json.id);
       setForm(blockToForm(json));
     } catch (err) {
@@ -380,7 +417,7 @@ export default function SchedulePage() {
     });
     const json = await response.json();
     if (!response.ok) throw new Error(json.error ?? "시간블록을 수정하지 못했습니다.");
-    await fetchSchedule();
+    upsertBlockLocally(json);
     setSelectedId(json.id);
     setForm(blockToForm(json));
   }
@@ -395,6 +432,12 @@ export default function SchedulePage() {
 
     setSaving(true);
     setError("");
+    upsertBlockLocally({
+      ...block,
+      date,
+      startMinutes: adjustedStart,
+      endMinutes,
+    });
     try {
       await patchBlock(block.id, {
         date,
@@ -403,6 +446,7 @@ export default function SchedulePage() {
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "시간블록을 이동하지 못했습니다.");
+      await fetchSchedule();
     } finally {
       setSaving(false);
       setDraggingBlockId("");
@@ -415,10 +459,15 @@ export default function SchedulePage() {
 
     setSaving(true);
     setError("");
+    upsertBlockLocally({
+      ...block,
+      endMinutes,
+    });
     try {
       await patchBlock(block.id, { endMinutes });
     } catch (err) {
       setError(err instanceof Error ? err.message : "시간을 조정하지 못했습니다.");
+      await fetchSchedule();
     } finally {
       setSaving(false);
       setResizingBlockId("");
@@ -449,15 +498,24 @@ export default function SchedulePage() {
         .find(Boolean) as HTMLElement | undefined;
     }
 
+    function getCellStartMinutes(cell: HTMLElement, clientY: number) {
+      const hour = parseInt(cell.dataset.hour ?? "", 10);
+      if (!Number.isInteger(hour)) return null;
+
+      const rect = cell.getBoundingClientRect();
+      const half = clientY - rect.top >= rect.height / 2 ? 30 : 0;
+      return hour * 60 + half;
+    }
+
     function handleMove(moveEvent: PointerEvent) {
       const cell = findCell(moveEvent.clientX, moveEvent.clientY);
       const date = cell?.dataset.date;
-      const hour = cell?.dataset.hour;
-      if (!date || !hour) {
+      const startMinutes = cell ? getCellStartMinutes(cell, moveEvent.clientY) : null;
+      if (!date || startMinutes == null) {
         setHoveredMoveCell(null);
         return;
       }
-      setHoveredMoveCell({ date, hour: parseInt(hour, 10) });
+      setHoveredMoveCell({ date, startMinutes });
     }
 
     function handleUp(upEvent: PointerEvent) {
@@ -478,10 +536,10 @@ export default function SchedulePage() {
 
       const cell = findCell(upEvent.clientX, upEvent.clientY);
       const date = cell?.dataset.date;
-      const hour = cell?.dataset.hour;
+      const startMinutes = cell ? getCellStartMinutes(cell, upEvent.clientY) : null;
 
-      if (!date || !hour) return;
-      moveBlock(block.id, date, parseInt(hour, 10) * 60);
+      if (!date || startMinutes == null) return;
+      moveBlock(block.id, date, startMinutes);
     }
 
     window.addEventListener("pointermove", handleMove);
@@ -492,14 +550,15 @@ export default function SchedulePage() {
     if (!form.id) return;
     setSaving(true);
     setError("");
+    removeBlockLocally(form.id);
     try {
       const response = await fetch(`/api/time-blocks?id=${form.id}`, { method: "DELETE" });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "삭제하지 못했습니다.");
       resetForm();
-      await fetchSchedule();
     } catch (err) {
       setError(err instanceof Error ? err.message : "삭제하지 못했습니다.");
+      await fetchSchedule();
     } finally {
       setSaving(false);
     }
@@ -674,13 +733,37 @@ export default function SchedulePage() {
                             }
                           }}
                           className={`relative h-16 border-r border-t border-slate-100 px-1 py-1 transition ${
-                            hoveredMoveCell?.date === date && hoveredMoveCell.hour === hour
+                            hoveredMoveCell?.date === date && Math.floor(hoveredMoveCell.startMinutes / 60) === hour
                               ? "bg-indigo-200/80"
                               : draggingPlanId || draggingBlockId
                                 ? "bg-indigo-50/50 hover:bg-indigo-100/70"
                                 : "bg-slate-50/40"
                           }`}
                         >
+                          {draggingBlock &&
+                            hoveredMoveCell?.date === date &&
+                            Math.floor(hoveredMoveCell.startMinutes / 60) === hour && (() => {
+                              const color = colorForBlock(draggingBlock);
+                              const height = `${Math.max(((draggingBlock.endMinutes - draggingBlock.startMinutes) / 60) * 64 - 4, 38)}px`;
+                              const top = hoveredMoveCell.startMinutes % 60 === 30 ? "33px" : "1px";
+                              return (
+                                <div
+                                  className="pointer-events-none absolute left-1 right-1 z-20 rounded-md border-2 border-dashed px-2 py-1 shadow-lg"
+                                  style={{
+                                    top,
+                                    height,
+                                    borderColor: color,
+                                    background: softColor(color),
+                                    color,
+                                  }}
+                                >
+                                  <div className="truncate text-[11px] font-black">{draggingBlock.title}</div>
+                                  <p className="mt-0.5 truncate text-[10px] font-semibold opacity-80">
+                                    {minutesToTime(hoveredMoveCell.startMinutes)}-{minutesToTime(Math.min(hoveredMoveCell.startMinutes + draggingBlock.endMinutes - draggingBlock.startMinutes, 24 * 60))}
+                                  </p>
+                                </div>
+                              );
+                            })()}
                           {hourBlocks.map((block) => {
                             const color = colorForBlock(block);
                             const top = `${((block.startMinutes - hour * 60) / 60) * 64}px`;
