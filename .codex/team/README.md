@@ -11,14 +11,21 @@ It replaces the legacy Claude responsive harness as the primary project workflow
 - `nextjs-engineer`: Owns Next.js App Router implementation, routing, server/client component boundaries, and build correctness.
 - `data-auth-engineer`: Owns Prisma, Turso/local DB separation, API handlers, authentication, sessions, and secrets handling.
 - `qa-release-reviewer`: Owns verification, regression risk, lint/build checks, route smoke tests, and release notes.
+- `ux-researcher`: Owns workflow validation, user friction discovery, and usability assumptions for planning and review flows.
+- `product-editor`: Owns goal/review writing structure, labels, templates, and content clarity.
+- `analytics-engineer`: Owns KPI definitions, trend logic, derived metrics, and dashboard interpretation quality.
+- `security-reviewer`: Owns privacy, auth/session risk, personal-data exposure, and dependency/security-sensitive review.
+- `deployment-operator`: Owns environment setup, deployment readiness, backup/recovery, and operational runbooks.
+- `content-automation-designer`: Owns no-LLM and LLM-assisted automation flows from records to reports, reviews, and blog drafts.
 
 ## Default Workflow
 
 1. Read local context first: `AGENTS.md`, this file, relevant source files, and installed Next.js docs under `node_modules/next/dist/docs/` when editing Next.js code.
 2. Produce a detailed implementation plan before editing code or config.
-3. Implement narrowly, preserving DB and secret boundaries.
-4. Verify with lint/build and route checks when practical.
-5. Summarize changed files, verification results, and remaining risk.
+3. Apply the relevant role guides for the request, including UX, analytics, security, deployment, and content automation when the work touches those areas.
+4. Implement narrowly, preserving DB and secret boundaries.
+5. Verify with lint/build and route checks when practical.
+6. Summarize changed files, verification results, and remaining risk.
 
 ## Artifact Paths
 

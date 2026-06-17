@@ -23,6 +23,8 @@ apply the generated SQL files with the Turso CLI:
 ```bash
 turso db shell p-kpi2 < ./prisma/migrations/20260516065204_init/migration.sql
 turso db shell p-kpi2 < ./prisma/migrations/20260516115527_add_monthly_plan_results/migration.sql
+turso db shell p-kpi2 < ./prisma/migrations/20260607090000_add_monthly_retrospectives/migration.sql
+turso db shell p-kpi2 < ./prisma/migrations/20260617060000_add_time_blocks/migration.sql
 ```
 
 ## 3. Configure Vercel environment variables
@@ -38,6 +40,23 @@ ANTHROPIC_API_KEY=...
 ```
 
 `ANTHROPIC_API_KEY` is only needed if the monthly review AI feature should work.
+
+For the optional Discord daily KPI reminder, also set:
+
+```txt
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+CRON_SECRET=...
+APP_BASE_URL=https://your-app.example.com
+DISCORD_NOTIFICATION_TIME_ZONE=Asia/Seoul
+```
+
+Call the reminder route from an external scheduler:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://your-app.example.com/api/notifications/discord/daily
+```
+
+Use `?dryRun=1` to preview the generated Discord payload without sending it.
 
 ## 4. Optional: copy local SQLite data to Turso
 

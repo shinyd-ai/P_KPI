@@ -4,6 +4,7 @@ import { AUTH_COOKIE_NAME, isAuthConfigured, verifyAuthToken } from "@/lib/auth"
 const PUBLIC_PATHS = [
   "/login",
   "/api/login",
+  "/api/notifications/discord/daily",
   "/icon.png",
   "/apple-icon.png",
   "/manifest.webmanifest",

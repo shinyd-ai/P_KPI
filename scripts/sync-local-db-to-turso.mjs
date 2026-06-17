@@ -94,6 +94,28 @@ const tables = [
     name: "MonthlyReview",
     columns: ["id", "year", "month", "content", "stats", "createdAt"],
   },
+  {
+    name: "MonthlyRetrospective",
+    columns: ["id", "year", "month", "content", "createdAt", "updatedAt"],
+  },
+  {
+    name: "TimeBlock",
+    columns: [
+      "id",
+      "date",
+      "title",
+      "startMinutes",
+      "endMinutes",
+      "status",
+      "note",
+      "actualMinutes",
+      "dailyPlanId",
+      "monthlyPlanId",
+      "goalId",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
 ];
 
 const deleteOrder = [...tables].reverse();
