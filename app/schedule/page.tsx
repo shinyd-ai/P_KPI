@@ -474,6 +474,48 @@ export default function SchedulePage() {
     }
   }
 
+  function shiftDate(date: string, deltaDays: number) {
+    const next = new Date(`${date}T00:00:00`);
+    next.setDate(next.getDate() + deltaDays);
+    return toLocalDateString(next);
+  }
+
+  function quickPatchSelected(payload: Partial<Pick<TimeBlock, "date" | "startMinutes" | "endMinutes">>) {
+    if (!selectedBlock) return;
+
+    const nextBlock = {
+      ...selectedBlock,
+      ...payload,
+    };
+    upsertBlockLocally(nextBlock);
+    setForm(blockToForm(nextBlock));
+    setSaving(true);
+    setError("");
+
+    patchBlock(selectedBlock.id, payload)
+      .catch(async (err) => {
+        setError(err instanceof Error ? err.message : "시간블록을 수정하지 못했습니다.");
+        await fetchSchedule();
+      })
+      .finally(() => setSaving(false));
+  }
+
+  function moveSelectedMinutes(deltaMinutes: number) {
+    if (!selectedBlock) return;
+    const duration = selectedBlock.endMinutes - selectedBlock.startMinutes;
+    const startMinutes = Math.min(Math.max(selectedBlock.startMinutes + deltaMinutes, 0), 24 * 60 - duration);
+    quickPatchSelected({
+      startMinutes,
+      endMinutes: startMinutes + duration,
+    });
+  }
+
+  function resizeSelectedMinutes(deltaMinutes: number) {
+    if (!selectedBlock) return;
+    const endMinutes = Math.min(Math.max(selectedBlock.endMinutes + deltaMinutes, selectedBlock.startMinutes + 30), 24 * 60);
+    quickPatchSelected({ endMinutes });
+  }
+
   function startBlockMove(block: TimeBlock, event: React.PointerEvent<HTMLDivElement>) {
     if (resizingBlockId) return;
 
@@ -870,6 +912,29 @@ export default function SchedulePage() {
                   </span>
                 )}
               </div>
+
+              {selectedBlock && (
+                <div className="mb-4 grid grid-cols-2 gap-2 md:hidden">
+                  <button type="button" onClick={() => quickPatchSelected({ date: shiftDate(normalizeApiDate(selectedBlock.date), -1) })} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    전날
+                  </button>
+                  <button type="button" onClick={() => quickPatchSelected({ date: shiftDate(normalizeApiDate(selectedBlock.date), 1) })} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    다음날
+                  </button>
+                  <button type="button" onClick={() => moveSelectedMinutes(-30)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    30분 앞
+                  </button>
+                  <button type="button" onClick={() => moveSelectedMinutes(30)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    30분 뒤
+                  </button>
+                  <button type="button" onClick={() => resizeSelectedMinutes(-30)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    30분 줄이기
+                  </button>
+                  <button type="button" onClick={() => resizeSelectedMinutes(30)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700">
+                    30분 늘리기
+                  </button>
+                </div>
+              )}
 
               <div className="space-y-3">
                 <label className="block">
