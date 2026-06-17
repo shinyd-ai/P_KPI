@@ -104,7 +104,8 @@ function toLocalDateString(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function normalizeApiDate(value: string) {
+function normalizeApiDate(value: string | null | undefined) {
+  if (!value) return "";
   return value.slice(0, 10);
 }
 
@@ -172,6 +173,7 @@ export default function SchedulePage() {
   const [data, setData] = useState<ScheduleData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [draggingPlanId, setDraggingPlanId] = useState("");
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   const [form, setForm] = useState<BlockForm>(() => ({
@@ -333,6 +335,40 @@ export default function SchedulePage() {
     }
   }
 
+  async function createBlockFromPlan(planId: string, date: string, startMinutes: number) {
+    const plan = data?.unplacedPlans.find((item) => item.id === planId);
+    if (!plan) return;
+
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/time-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dailyPlanId: plan.id,
+          title: plan.title,
+          date,
+          startMinutes,
+          endMinutes: Math.min(startMinutes + 60, 24 * 60),
+          status: "PLANNED",
+          actualMinutes: "",
+          note: "",
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? "시간블록을 만들지 못했습니다.");
+      await fetchSchedule();
+      setSelectedId(json.id);
+      setForm(blockToForm(json));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "시간블록을 만들지 못했습니다.");
+    } finally {
+      setSaving(false);
+      setDraggingPlanId("");
+    }
+  }
+
   async function deleteBlock() {
     if (!form.id) return;
     setSaving(true);
@@ -411,6 +447,13 @@ export default function SchedulePage() {
                       <button
                         key={plan.id}
                         onClick={() => selectPlan(plan.id)}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData("text/plain", plan.id);
+                          event.dataTransfer.effectAllowed = "copy";
+                          setDraggingPlanId(plan.id);
+                        }}
+                        onDragEnd={() => setDraggingPlanId("")}
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-slate-300 hover:bg-white"
                       >
                         <div className="mb-2 flex items-start gap-2">
@@ -488,7 +531,22 @@ export default function SchedulePage() {
                         return blockDate === date && block.startMinutes >= hour * 60 && block.startMinutes < (hour + 1) * 60;
                       });
                       return (
-                        <div key={`${date}-${hour}`} className="relative h-16 border-r border-t border-slate-100 bg-slate-50/40 px-1 py-1">
+                        <div
+                          key={`${date}-${hour}`}
+                          onDragOver={(event) => {
+                            if (!draggingPlanId) return;
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "copy";
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            const planId = event.dataTransfer.getData("text/plain");
+                            if (planId) createBlockFromPlan(planId, date, hour * 60);
+                          }}
+                          className={`relative h-16 border-r border-t border-slate-100 px-1 py-1 transition ${
+                            draggingPlanId ? "bg-indigo-50/50 hover:bg-indigo-100/70" : "bg-slate-50/40"
+                          }`}
+                        >
                           {hourBlocks.map((block) => {
                             const color = colorForBlock(block);
                             const top = `${((block.startMinutes - hour * 60) / 60) * 64}px`;
@@ -566,7 +624,7 @@ export default function SchedulePage() {
                     ))}
                     {selectedBlock?.dailyPlan && (
                       <option value={selectedBlock.dailyPlan.id}>
-                        {normalizeApiDate(selectedBlock.dailyPlan.date)} · {selectedBlock.dailyPlan.title}
+                        {normalizeApiDate(selectedBlock.dailyPlan.date) || form.date} · {selectedBlock.dailyPlan.title}
                       </option>
                     )}
                   </select>

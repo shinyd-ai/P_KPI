@@ -53,6 +53,7 @@ const includeRelations = {
   dailyPlan: {
     select: {
       id: true,
+      date: true,
       title: true,
       completed: true,
       estimatedMinutes: true,
