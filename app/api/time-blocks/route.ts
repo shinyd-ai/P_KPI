@@ -49,6 +49,24 @@ async function ensureTimeBlockTable() {
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "TimeBlock_goalId_idx" ON "TimeBlock"("goalId")`);
 }
 
+async function syncDailyPlanEstimatedMinutes(dailyPlanId: string | null | undefined) {
+  if (!dailyPlanId) return;
+
+  const blocks = await prisma.timeBlock.findMany({
+    where: { dailyPlanId },
+    select: { startMinutes: true, endMinutes: true },
+  });
+  const estimatedMinutes = blocks.reduce(
+    (sum, block) => sum + Math.max(block.endMinutes - block.startMinutes, 0),
+    0
+  );
+
+  await prisma.dailyPlan.update({
+    where: { id: dailyPlanId },
+    data: { estimatedMinutes: estimatedMinutes > 0 ? estimatedMinutes : null },
+  });
+}
+
 const includeRelations = {
   dailyPlan: {
     select: {
@@ -165,9 +183,11 @@ export async function POST(request: NextRequest) {
 
     const actualMinutes = body.actualMinutes === "" || body.actualMinutes == null ? null : normalizeMinutes(body.actualMinutes);
 
+    const targetDate = toDateOnly(date);
+
     const block = await prisma.timeBlock.create({
       data: {
-        date: toDateOnly(date),
+        date: targetDate,
         title,
         startMinutes,
         endMinutes,
@@ -180,6 +200,14 @@ export async function POST(request: NextRequest) {
       },
       include: includeRelations,
     });
+
+    if (dailyPlanId) {
+      await prisma.dailyPlan.update({
+        where: { id: dailyPlanId },
+        data: { date: targetDate },
+      });
+      await syncDailyPlanEstimatedMinutes(dailyPlanId);
+    }
 
     return NextResponse.json(block, { status: 201 });
   } catch (error) {
@@ -206,7 +234,11 @@ export async function PATCH(request: NextRequest) {
       if (!title) return NextResponse.json({ error: "title cannot be empty" }, { status: 400 });
       data.title = title;
     }
-    if (body.date !== undefined) data.date = toDateOnly(String(body.date));
+    let nextDate: Date | null = null;
+    if (body.date !== undefined) {
+      nextDate = toDateOnly(String(body.date));
+      data.date = nextDate;
+    }
     if (body.startMinutes !== undefined) {
       const startMinutes = normalizeMinutes(body.startMinutes);
       if (startMinutes == null) return NextResponse.json({ error: "Invalid startMinutes" }, { status: 400 });
@@ -245,6 +277,14 @@ export async function PATCH(request: NextRequest) {
       include: includeRelations,
     });
 
+    if (nextDate && block.dailyPlanId) {
+      await prisma.dailyPlan.update({
+        where: { id: block.dailyPlanId },
+        data: { date: nextDate },
+      });
+    }
+    await syncDailyPlanEstimatedMinutes(block.dailyPlanId);
+
     return NextResponse.json(block);
   } catch (error) {
     console.error("PATCH /api/time-blocks error:", error);
@@ -262,7 +302,12 @@ export async function DELETE(request: NextRequest) {
 
   try {
     await ensureTimeBlockTable();
+    const block = await prisma.timeBlock.findUnique({
+      where: { id },
+      select: { dailyPlanId: true },
+    });
     await prisma.timeBlock.delete({ where: { id } });
+    await syncDailyPlanEstimatedMinutes(block?.dailyPlanId);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("DELETE /api/time-blocks error:", error);

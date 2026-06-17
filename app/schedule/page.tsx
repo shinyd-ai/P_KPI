@@ -174,6 +174,9 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draggingPlanId, setDraggingPlanId] = useState("");
+  const [draggingBlockId, setDraggingBlockId] = useState("");
+  const [hoveredMoveCell, setHoveredMoveCell] = useState<{ date: string; hour: number } | null>(null);
+  const [resizingBlockId, setResizingBlockId] = useState("");
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   const [form, setForm] = useState<BlockForm>(() => ({
@@ -369,6 +372,122 @@ export default function SchedulePage() {
     }
   }
 
+  async function patchBlock(id: string, payload: Record<string, unknown>) {
+    const response = await fetch("/api/time-blocks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, ...payload }),
+    });
+    const json = await response.json();
+    if (!response.ok) throw new Error(json.error ?? "시간블록을 수정하지 못했습니다.");
+    await fetchSchedule();
+    setSelectedId(json.id);
+    setForm(blockToForm(json));
+  }
+
+  async function moveBlock(blockId: string, date: string, startMinutes: number) {
+    const block = data?.timeBlocks.find((item) => item.id === blockId);
+    if (!block) return;
+
+    const duration = block.endMinutes - block.startMinutes;
+    const endMinutes = Math.min(startMinutes + duration, 24 * 60);
+    const adjustedStart = Math.max(0, endMinutes - duration);
+
+    setSaving(true);
+    setError("");
+    try {
+      await patchBlock(block.id, {
+        date,
+        startMinutes: adjustedStart,
+        endMinutes,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "시간블록을 이동하지 못했습니다.");
+    } finally {
+      setSaving(false);
+      setDraggingBlockId("");
+    }
+  }
+
+  async function resizeBlock(block: TimeBlock, nextEndMinutes: number) {
+    const roundedEnd = Math.round(nextEndMinutes / 30) * 30;
+    const endMinutes = Math.min(Math.max(roundedEnd, block.startMinutes + 30), 24 * 60);
+
+    setSaving(true);
+    setError("");
+    try {
+      await patchBlock(block.id, { endMinutes });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "시간을 조정하지 못했습니다.");
+    } finally {
+      setSaving(false);
+      setResizingBlockId("");
+    }
+  }
+
+  function startBlockMove(block: TimeBlock, event: React.PointerEvent<HTMLDivElement>) {
+    if (resizingBlockId) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDraggingBlockId(block.id);
+    setHoveredMoveCell(null);
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const target = event.currentTarget;
+
+    function findCell(clientX: number, clientY: number) {
+      target.style.pointerEvents = "none";
+      const elements = document.elementsFromPoint(clientX, clientY);
+      target.style.pointerEvents = "";
+
+      return document
+        .elementsFromPoint(clientX, clientY)
+        .concat(elements)
+        .map((element) => element.closest("[data-schedule-cell]"))
+        .find(Boolean) as HTMLElement | undefined;
+    }
+
+    function handleMove(moveEvent: PointerEvent) {
+      const cell = findCell(moveEvent.clientX, moveEvent.clientY);
+      const date = cell?.dataset.date;
+      const hour = cell?.dataset.hour;
+      if (!date || !hour) {
+        setHoveredMoveCell(null);
+        return;
+      }
+      setHoveredMoveCell({ date, hour: parseInt(hour, 10) });
+    }
+
+    function handleUp(upEvent: PointerEvent) {
+      if (target.hasPointerCapture(upEvent.pointerId)) {
+        target.releasePointerCapture(upEvent.pointerId);
+      }
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+
+      const moved = Math.abs(upEvent.clientX - startX) > 6 || Math.abs(upEvent.clientY - startY) > 6;
+      setDraggingBlockId("");
+      setHoveredMoveCell(null);
+
+      if (!moved) {
+        selectBlock(block);
+        return;
+      }
+
+      const cell = findCell(upEvent.clientX, upEvent.clientY);
+      const date = cell?.dataset.date;
+      const hour = cell?.dataset.hour;
+
+      if (!date || !hour) return;
+      moveBlock(block.id, date, parseInt(hour, 10) * 60);
+    }
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+  }
+
   async function deleteBlock() {
     if (!form.id) return;
     setSaving(true);
@@ -449,6 +568,7 @@ export default function SchedulePage() {
                         onClick={() => selectPlan(plan.id)}
                         draggable
                         onDragStart={(event) => {
+                          event.dataTransfer.setData("application/x-pkpi-plan", plan.id);
                           event.dataTransfer.setData("text/plain", plan.id);
                           event.dataTransfer.effectAllowed = "copy";
                           setDraggingPlanId(plan.id);
@@ -533,18 +653,32 @@ export default function SchedulePage() {
                       return (
                         <div
                           key={`${date}-${hour}`}
+                          data-schedule-cell="true"
+                          data-date={date}
+                          data-hour={hour}
                           onDragOver={(event) => {
-                            if (!draggingPlanId) return;
+                            if (!draggingPlanId && !draggingBlockId) return;
                             event.preventDefault();
-                            event.dataTransfer.dropEffect = "copy";
+                            event.dataTransfer.dropEffect = draggingBlockId ? "move" : "copy";
                           }}
                           onDrop={(event) => {
                             event.preventDefault();
-                            const planId = event.dataTransfer.getData("text/plain");
-                            if (planId) createBlockFromPlan(planId, date, hour * 60);
+                            const blockId = event.dataTransfer.getData("application/x-pkpi-block");
+                            const planId =
+                              event.dataTransfer.getData("application/x-pkpi-plan") ||
+                              event.dataTransfer.getData("text/plain");
+                            if (blockId) {
+                              moveBlock(blockId, date, hour * 60);
+                            } else if (planId) {
+                              createBlockFromPlan(planId, date, hour * 60);
+                            }
                           }}
                           className={`relative h-16 border-r border-t border-slate-100 px-1 py-1 transition ${
-                            draggingPlanId ? "bg-indigo-50/50 hover:bg-indigo-100/70" : "bg-slate-50/40"
+                            hoveredMoveCell?.date === date && hoveredMoveCell.hour === hour
+                              ? "bg-indigo-200/80"
+                              : draggingPlanId || draggingBlockId
+                                ? "bg-indigo-50/50 hover:bg-indigo-100/70"
+                                : "bg-slate-50/40"
                           }`}
                         >
                           {hourBlocks.map((block) => {
@@ -553,11 +687,21 @@ export default function SchedulePage() {
                             const height = `${Math.max(((block.endMinutes - block.startMinutes) / 60) * 64 - 4, 38)}px`;
                             const isSelected = selectedId === block.id;
                             return (
-                              <button
+                              <div
                                 key={block.id}
-                                type="button"
+                                role="button"
+                                tabIndex={0}
+                                onPointerDown={(event) => startBlockMove(block, event)}
                                 onClick={() => selectBlock(block)}
-                                className={`absolute left-1 right-1 overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm transition hover:shadow-md ${isSelected ? "ring-2 ring-slate-900/15" : ""}`}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    selectBlock(block);
+                                  }
+                                }}
+                                className={`absolute left-1 right-1 z-10 cursor-grab overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm transition hover:z-30 hover:shadow-md active:cursor-grabbing ${
+                                  draggingBlockId === block.id ? "z-30 opacity-60 ring-2 ring-indigo-300" : ""
+                                } ${isSelected ? "ring-2 ring-slate-900/15" : ""}`}
                                 style={{
                                   top,
                                   height,
@@ -575,7 +719,43 @@ export default function SchedulePage() {
                                 <p className="mt-0.5 truncate text-[10px] font-semibold opacity-80">
                                   {minutesToTime(block.startMinutes)}-{minutesToTime(block.endMinutes)}
                                 </p>
-                              </button>
+                                <span
+                                  role="separator"
+                                  aria-label="시간 조정"
+                                  onPointerDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setResizingBlockId(block.id);
+
+                                    const startY = event.clientY;
+                                    const originalEnd = block.endMinutes;
+                                    const target = event.currentTarget;
+                                    target.setPointerCapture(event.pointerId);
+
+                                    function handleMove(moveEvent: PointerEvent) {
+                                      const deltaMinutes = Math.round(((moveEvent.clientY - startY) / 32) * 30);
+                                      const previewEnd = Math.min(Math.max(Math.round((originalEnd + deltaMinutes) / 30) * 30, block.startMinutes + 30), 24 * 60);
+                                      setForm((current) =>
+                                        current.id === block.id
+                                          ? { ...current, endTime: minutesToTime(previewEnd) }
+                                          : current
+                                      );
+                                    }
+
+                                    function handleUp(upEvent: PointerEvent) {
+                                      target.releasePointerCapture(upEvent.pointerId);
+                                      window.removeEventListener("pointermove", handleMove);
+                                      window.removeEventListener("pointerup", handleUp);
+                                      const deltaMinutes = Math.round(((upEvent.clientY - startY) / 32) * 30);
+                                      resizeBlock(block, originalEnd + deltaMinutes);
+                                    }
+
+                                    window.addEventListener("pointermove", handleMove);
+                                    window.addEventListener("pointerup", handleUp);
+                                  }}
+                                  className="absolute inset-x-2 bottom-1 z-40 h-2 cursor-ns-resize rounded-full bg-white/70"
+                                />
+                              </div>
                             );
                           })}
                           {loading && dayIndex === 0 && hour === 6 && (
